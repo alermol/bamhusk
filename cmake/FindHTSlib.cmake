@@ -100,7 +100,7 @@ if(HTSlib_FOUND AND NOT TARGET HTSlib::htslib)
         else()
             list(APPEND _htslib_link_libraries regex tre intl)
         endif()
-        list(APPEND _htslib_link_libraries ws2_32)
+        list(APPEND _htslib_link_libraries iconv ws2_32)
         set_property(
             TARGET HTSlib::htslib
             PROPERTY INTERFACE_LINK_LIBRARIES ${_htslib_link_libraries}

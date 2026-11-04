@@ -71,8 +71,8 @@ Notarisation runs in the release workflow when Apple secrets are configured.
 ## Windows build
 
 Use an MSYS2 MinGW64 shell with `gcc`, `cmake`, `ninja`, `pkgconf`, `make`,
-`bzip2`, `mingw-w64-x86_64-zlib`, `mingw-w64-x86_64-libsystre`, and
-`mingw-w64-x86_64-samtools` installed:
+`bzip2`, `mingw-w64-x86_64-zlib`, `mingw-w64-x86_64-libiconv`,
+`mingw-w64-x86_64-libsystre`, and `mingw-w64-x86_64-samtools` installed:
 
 ```sh
 bash scripts/build-windows.sh

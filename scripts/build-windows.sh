@@ -70,8 +70,12 @@ if [[ ! -f "${htslib_prefix}/lib/libhts.a" ]]; then
             --disable-gcs \
             --disable-s3 \
             --without-libdeflate
-        make -j "${jobs}"
-        make install
+        # Husk only needs the static archive. Avoid the shared DLL target,
+        # which requires gendef on MinGW.
+        make -j "${jobs}" libhts.a
+        make installdirs install-pkgconfig
+        cp libhts.a "${htslib_prefix}/lib/libhts.a"
+        cp htslib/*.h "${htslib_prefix}/include/htslib/"
     )
 fi
 
