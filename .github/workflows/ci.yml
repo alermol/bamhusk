@@ -19,9 +19,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: mamba-org/setup-micromamba@v2
+      - uses: mamba-org/setup-micromamba@v3
         with:
           environment-name: husk
+          init-shell: bash
+          generate-run-shell: false
           create-args: >-
             cmake
             ninja
@@ -48,9 +50,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: mamba-org/setup-micromamba@v2
+      - uses: mamba-org/setup-micromamba@v3
         with:
           environment-name: husk
+          init-shell: bash
+          generate-run-shell: false
           create-args: >-
             cmake
             ninja
@@ -89,9 +93,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang
 
-      - uses: mamba-org/setup-micromamba@v2
+      - uses: mamba-org/setup-micromamba@v3
         with:
           environment-name: husk
+          init-shell: bash
+          generate-run-shell: false
           create-args: >-
             cmake
             ninja
@@ -130,9 +136,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang
 
-      - uses: mamba-org/setup-micromamba@v2
+      - uses: mamba-org/setup-micromamba@v3
         with:
           environment-name: husk
+          init-shell: bash
+          generate-run-shell: false
           create-args: >-
             cmake
             ninja
