@@ -78,7 +78,6 @@ Never download or execute a binary automatically.
 - [`docs/spec.md`](docs/spec.md)
 - [`docs/build.md`](docs/build.md)
 - [`docs/verification.md`](docs/verification.md)
-- [`docs/release.md`](docs/release.md)
 
 ## License
 
