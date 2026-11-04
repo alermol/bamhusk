@@ -53,7 +53,8 @@ The macOS job uses these repository secrets when present:
 | `APPLE_APP_PASSWORD` | App-specific password |
 
 Without them, the macOS build is ad-hoc signed and is not notarised. The
-manifest and checksums still protect integrity.
+manifest and checksums still protect integrity. Configure every secret above
+before publishing a release that must satisfy the notarised-asset contract.
 
 ## Docker
 
@@ -68,6 +69,6 @@ GHCR on tags.
 - [ ] All four platform assets are present.
 - [ ] `manifest.json` validates against the schema.
 - [ ] `SHA256SUMS` verifies.
-- [ ] macOS signature and notarisation validate.
+- [ ] macOS signature validates; notarisation validates when configured.
 - [ ] Each binary passes `tests/integration/smoke.sh`.
 - [ ] The source tarball builds and tests.

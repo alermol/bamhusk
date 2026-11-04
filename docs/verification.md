@@ -1,9 +1,9 @@
 # Verification
 
-Every release asset has a SHA-256 checksum in both `SHA256SUMS` and
-`manifest.json`. The macOS binary is signed and notarised when the release
-secrets are configured. The source tarball is the fallback when a binary is
-unavailable or untrusted.
+Every binary release asset has a SHA-256 checksum in both `SHA256SUMS` and
+`manifest.json`; the source tarball is listed in `SHA256SUMS`. The macOS
+binary is signed and notarised when the release secrets are configured. The
+source tarball is the fallback when a binary is unavailable or untrusted.
 
 ## Verify the checksums
 
@@ -48,8 +48,11 @@ The schema is [`manifest.schema.json`](manifest.schema.json).
 ```sh
 codesign --verify --deep --strict --verbose=2 husk-*-macos-universal2
 spctl --assess --type execute --verbose=2 husk-*-macos-universal2
-xcrun stapler validate husk-*-macos-universal2
 ```
+
+A standalone Mach-O executable cannot carry a stapled notarization ticket.
+Gatekeeper checks the ticket online when the binary is first run; keep network
+access for that first check.
 
 ## Build from source instead
 

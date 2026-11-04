@@ -68,17 +68,17 @@ The full contract, including the release manifest, is in
 
 ## Verification
 
-Every release asset has a SHA-256 checksum in `SHA256SUMS` and
-`manifest.json`. See [`docs/verification.md`](docs/verification.md) for
-platform-specific commands. Never download or execute a binary automatically.
+Every binary release asset has a SHA-256 checksum in `SHA256SUMS` and
+`manifest.json`; the source tarball has a checksum in `SHA256SUMS`. See
+[`docs/verification.md`](docs/verification.md) for platform-specific commands.
+Never download or execute a binary automatically.
 
 ## Documentation
 
+- [`docs/spec.md`](docs/spec.md)
 - [`docs/build.md`](docs/build.md)
 - [`docs/verification.md`](docs/verification.md)
 - [`docs/release.md`](docs/release.md)
-- [`docs/troubleshooting.md`](docs/troubleshooting.md)
-- [`docs/benchmarking.md`](docs/benchmarking.md)
 
 ## License
 
