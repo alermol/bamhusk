@@ -75,16 +75,51 @@ bool same_file(const std::filesystem::path &a, const std::filesystem::path &b) {
     return canonical_a == canonical_b;
 }
 
+enum class PathState : std::uint8_t {
+    Available,
+    Occupied,
+    Error,
+};
+
+PathState path_state(const std::filesystem::path &path) {
+    const auto state_of = [](const std::filesystem::path &candidate) {
+        std::error_code error;
+        const auto status =
+            std::filesystem::symlink_status(candidate, error);
+        if (error == std::errc::no_such_file_or_directory) {
+            return PathState::Available;
+        }
+        if (error) {
+            return PathState::Error;
+        }
+        // exists(status) is true for symlinks, including dangling ones.
+        return std::filesystem::exists(status) ? PathState::Occupied
+                                               : PathState::Available;
+    };
+
+    const PathState path_status = state_of(path);
+    if (path_status != PathState::Available) {
+        return path_status;
+    }
+
+    // The caller may create an adjacent .csi index for this path. Reserve
+    // both names so an existing file or symlink is never followed.
+    return state_of(with_suffix(path, ".csi"));
+}
+
 std::filesystem::path temporary_path_for(const std::filesystem::path &output) {
     const std::string base = ".tmp." + std::to_string(process_id());
     std::filesystem::path candidate = with_suffix(output, base);
-    std::error_code error;
-    for (int attempt = 1;
-         std::filesystem::exists(candidate, error) && !error;
-         ++attempt) {
+    for (int attempt = 1;; ++attempt) {
+        const PathState state = path_state(candidate);
+        if (state == PathState::Available) {
+            return candidate;
+        }
+        if (state == PathState::Error) {
+            return {};
+        }
         candidate = with_suffix(output, base + "." + std::to_string(attempt));
     }
-    return candidate;
 }
 
 bool replace_file(

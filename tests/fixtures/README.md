@@ -8,8 +8,8 @@ BAMs to a temporary directory:
 ```
 
 The set covers flags, CIGAR operations, tags, missing and malformed `RG`,
-multi-sample headers, empty BAMs, unsorted input, unmapped reads, and a
-long CIGAR stored as `CG:B:I`.
+single- and mixed-sample headers, empty BAMs, unsorted input, unmapped reads,
+and a CIGAR with more than 65535 operations stored as `CG:B:I`.
 
 CTest calls the generator from `tests/integration/run.sh`, so the repository
 stays free of binary test data.

@@ -78,11 +78,14 @@ check_output_contract() {
     if [[ "$(view "${input}" | wc -l)" -ne "$(view "${output}" | wc -l)" ]]; then
         fail "read count changed for ${output}"
     fi
-    if samtools view --no-PG -H "${output}" | grep -qE '^@(PG|CO)'; then
+    if samtools view --no-PG -H "${output}" | grep -E '^@(PG|CO)' >/dev/null; then
         fail "@PG or @CO survived in ${output}"
     fi
-    if view "${output}" | cut -f12- | tr '\t' '\n' |
-        grep -vE '^(RG:Z:.*|CG:B:I.*|)$' | grep -q .; then
+    extra=$(
+        view "${output}" | cut -f12- | tr '\t' '\n' |
+            grep -vE '^(RG:Z:.*|CG:B:I.*|)$' || true
+    )
+    if [[ -n "${extra}" ]]; then
         fail "unexpected optional tag in ${output}"
     fi
 }
@@ -128,7 +131,7 @@ fi
 "${husk}" --drop-rg "${fixtures}/basic.bam" "${work}/drop-rg.bam"
 check_output_contract "${fixtures}/basic.bam" "${work}/drop-rg.bam"
 compare_fields "${fixtures}/basic.bam" "${work}/drop-rg.bam" 2 10 "drop-rg"
-if view "${work}/drop-rg.bam" | cut -f12- | grep -q 'RG:'; then
+if view "${work}/drop-rg.bam" | cut -f12- | grep 'RG:' >/dev/null; then
     fail "--drop-rg left RG tags"
 fi
 
@@ -172,12 +175,25 @@ samtools quickcheck -v "${work}/empty.out.bam" || fail "empty output invalid"
 [[ "$(samtools view -c "${work}/empty.out.bam")" -eq 0 ]] ||
     fail "empty BAM gained records"
 
-# Long CIGAR round-trip.
+# Long CIGAR round-trip (more than 65535 operations, stored as CG:B:I).
 "${husk}" "${fixtures}/long_cigar.bam" "${work}/long-cigar.out.bam"
 check_output_contract "${fixtures}/long_cigar.bam" "${work}/long-cigar.out.bam"
 input_cigar=$(view "${fixtures}/long_cigar.bam" | cut -f6)
 output_cigar=$(view "${work}/long-cigar.out.bam" | cut -f6)
 [[ "${input_cigar}" == "${output_cigar}" ]] ||
     fail "long CIGAR changed: ${input_cigar} -> ${output_cigar}"
+
+"${husk}" --drop-seq "${fixtures}/long_cigar.bam" \
+    "${work}/long-cigar-no-seq.bam"
+check_output_contract "${fixtures}/long_cigar.bam" \
+    "${work}/long-cigar-no-seq.bam"
+output_cigar=$(view "${work}/long-cigar-no-seq.bam" | cut -f6)
+[[ "${input_cigar}" == "${output_cigar}" ]] ||
+    fail "long CIGAR changed with --drop-seq"
+if view "${work}/long-cigar-no-seq.bam" | awk -F'\t' '$10 != "*" { exit 1 }'; then
+    :
+else
+    fail "--drop-seq left SEQ data for the long CIGAR"
+fi
 
 echo "differential: all checks passed"

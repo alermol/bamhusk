@@ -140,6 +140,42 @@ void test_record() {
     }
 
     {
+        husk_test::BamPtr malformed_aux = husk_test::make_record(
+            header.get(),
+            "r3\t0\tchr1\t3\t60\t4M\t*\t0\t0\tACGT\tIIII"
+        );
+        const std::uint8_t unterminated[] = {'b', 'a', 'd'};
+        CHECK(bam_aux_append(
+                  malformed_aux.get(),
+                  "RG",
+                  'Z',
+                  sizeof(unterminated),
+                  unterminated
+              ) >= 0);
+        husk_test::BamPtr destination(bam_init1());
+        std::string error;
+        CHECK(!husk::transform_record(
+            malformed_aux.get(),
+            destination.get(),
+            husk::RecordPolicy{},
+            error
+        ));
+        CHECK(error.find("RG") != std::string::npos);
+    }
+
+    {
+        husk_test::BamPtr destination(bam_init1());
+        std::string error;
+        husk::RecordPolicy policy{};
+        policy.drop_seq = true;
+        policy.keep_qual = true;
+        CHECK(!husk::transform_record(
+            source.get(), destination.get(), policy, error
+        ));
+        CHECK(error.find("--keep-qual") != std::string::npos);
+    }
+
+    {
         husk_test::BamPtr long_cigar = husk_test::make_record(
             header.get(),
             "r3\t0\tchr1\t3\t60\t2M2M\t*\t0\t0\tACGT\tIIII\tRG:Z:s1"

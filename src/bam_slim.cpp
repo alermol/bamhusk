@@ -6,6 +6,7 @@
 #include <htslib/hts.h>
 #include <htslib/sam.h>
 
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -61,93 +62,49 @@ void report(const std::string &message) {
     std::fprintf(stderr, "husk: %s\n", message.c_str());
 }
 
-int aux_type_size(char type) {
-    switch (type) {
-    case 'A':
-    case 'c':
-    case 'C':
-        return 1;
-    case 's':
-    case 'S':
-        return 2;
-    case 'i':
-    case 'I':
-    case 'f':
-        return 4;
-    case 'd':
-        return 8;
-    default:
-        return 0;
-    }
-}
-
-bool append_aux(
-    bam1_t *destination,
-    const bam1_t *source,
-    const char *tag,
-    bool require_string,
+bool remove_unwanted_aux(
+    bam1_t *record,
+    bool keep_rg,
+    bool keep_cg,
     std::string &error
 ) {
-    const std::uint8_t *aux = bam_aux_get(source, tag);
+    errno = 0;
+    std::uint8_t *aux = bam_aux_first(record);
     if (aux == nullptr) {
-        return true;
-    }
-
-    const char type = static_cast<char>(aux[0]);
-    if (require_string && type != 'Z') {
-        error = std::string("read has a malformed ") + tag + " tag";
+        if (errno == ENOENT) {
+            return true;
+        }
+        error = "read has malformed auxiliary data";
         return false;
     }
 
-    if (type == 'B') {
-        const std::int32_t count = bam_auxB_len(aux);
-        const int subtype_size = aux_type_size(static_cast<char>(aux[1]));
-        if (count < 0 || subtype_size <= 0) {
-            error = std::string("read has a malformed ") + tag + " tag";
-            return false;
-        }
-        const std::size_t data_length =
-            5 + static_cast<std::size_t>(count) *
-                    static_cast<std::size_t>(subtype_size);
-        if (bam_aux_append(
-                destination, tag, 'B', data_length, aux + 1
-            ) < 0) {
-            error = std::string("cannot copy the ") + tag + " tag";
-            return false;
-        }
-        return true;
-    }
+    while (aux != nullptr) {
+        const bool is_rg = aux[-2] == 'R' && aux[-1] == 'G';
+        const bool is_cg = aux[-2] == 'C' && aux[-1] == 'G';
+        const bool keep_rg_tag = is_rg && keep_rg;
+        const bool keep_cg_tag =
+            is_cg && keep_cg && aux[0] == 'B' &&
+            (aux[1] == 'I' || aux[1] == 'i');
 
-    if (type == 'Z' || type == 'H') {
-        const char *value = bam_aux2Z(aux);
-        if (value == nullptr) {
-            error = std::string("read has a malformed ") + tag + " tag";
-            return false;
+        if (keep_rg_tag) {
+            const std::uint8_t *end = record->data + record->l_data;
+            if (aux[0] != 'Z' ||
+                std::memchr(aux + 1, 0, static_cast<std::size_t>(end - aux - 1)) ==
+                    nullptr) {
+                error = "read has a malformed RG tag";
+                return false;
+            }
         }
-        const std::size_t data_length = std::strlen(value) + 1;
-        if (bam_aux_append(
-                destination,
-                tag,
-                type,
-                data_length,
-                reinterpret_cast<const std::uint8_t *>(value)
-            ) < 0) {
-            error = std::string("cannot copy the ") + tag + " tag";
-            return false;
-        }
-        return true;
-    }
 
-    const int size = aux_type_size(type);
-    if (size <= 0) {
-        error = std::string("read has a malformed ") + tag + " tag";
-        return false;
-    }
-    if (bam_aux_append(
-            destination, tag, type, static_cast<std::size_t>(size), aux + 1
-        ) < 0) {
-        error = std::string("cannot copy the ") + tag + " tag";
-        return false;
+        if (keep_rg_tag || keep_cg_tag) {
+            aux = bam_aux_next(record, aux);
+        } else {
+            aux = bam_aux_remove(record, aux);
+        }
+        if (aux == nullptr && errno != ENOENT) {
+            error = "read has malformed auxiliary data";
+            return false;
+        }
     }
     return true;
 }
@@ -192,69 +149,100 @@ bool transform_record(
         error = "null BAM record";
         return false;
     }
-
-    const char *name = policy.keep_name ? bam_get_qname(source) : nullptr;
-    const std::size_t name_length =
-        policy.keep_name ? std::strlen(name) : 0;
-
-    std::string sequence;
-    std::string qualities;
-    const char *sequence_ptr = nullptr;
-    const char *quality_ptr = nullptr;
-    std::size_t sequence_length = 0;
-
-    if (!policy.drop_seq && source->core.l_qseq > 0) {
-        sequence_length = static_cast<std::size_t>(source->core.l_qseq);
-        sequence.resize(sequence_length);
-        const std::uint8_t *packed = bam_get_seq(source);
-        for (std::size_t index = 0; index < sequence_length; ++index) {
-            sequence[index] = seq_nt16_str[bam_seqi(packed, index)];
-        }
-        sequence_ptr = sequence.data();
-
-        if (policy.keep_qual) {
-            const std::uint8_t *raw = bam_get_qual(source);
-            if (raw[0] != 0xff) {
-                qualities.assign(
-                    reinterpret_cast<const char *>(raw), sequence_length
-                );
-                quality_ptr = qualities.data();
-            }
-        }
+    if (source == destination) {
+        error = "source and destination must be different records";
+        return false;
+    }
+    if (policy.drop_seq && policy.keep_qual) {
+        error = "--keep-qual requires SEQ";
+        return false;
     }
 
-    const std::uint32_t *cigar =
-        source->core.n_cigar > 0 ? bam_get_cigar(source) : nullptr;
-    if (bam_set1(
-            destination,
-            name_length,
-            name,
-            source->core.flag,
-            source->core.tid,
-            source->core.pos,
-            source->core.qual,
-            static_cast<std::size_t>(source->core.n_cigar),
-            cigar,
-            source->core.mtid,
-            source->core.mpos,
-            source->core.isize,
-            sequence_length,
-            sequence_ptr,
-            quality_ptr,
-            0
-        ) < 0) {
-        error = "cannot rebuild a BAM record";
-        return false;
+    if (!policy.drop_seq && source->core.l_qseq > 0 &&
+        !(source->core.flag & BAM_FUNMAP)) {
+        const hts_pos_t query_length = bam_cigar2qlen(
+            static_cast<int>(source->core.n_cigar), bam_get_cigar(source)
+        );
+        if (query_length != source->core.l_qseq) {
+            error = "CIGAR and query sequence lengths differ";
+            return false;
+        }
     }
 
     // A CIGAR longer than 65535 operations is represented by a two-operation
     // placeholder plus a CG:B:I tag. Preserve CG or the real CIGAR is lost.
-    if (source->core.n_cigar == 2 && bam_aux_get(source, "CG") != nullptr) {
-        if (!append_aux(destination, source, "CG", false, error)) {
+    bool keep_cg = false;
+    if (source->core.n_cigar == 2) {
+        errno = 0;
+        const std::uint8_t *cg = bam_aux_get(source, "CG");
+        if (cg == nullptr) {
+            if (errno != ENOENT) {
+                error = "read has a malformed CG tag";
+                return false;
+            }
+        } else if (cg[0] == 'B' && (cg[1] == 'I' || cg[1] == 'i')) {
+            keep_cg = true;
+        }
+    }
+
+    if (!policy.drop_rg) {
+        errno = 0;
+        const std::uint8_t *rg = bam_aux_get(source, "RG");
+        if (rg == nullptr) {
+            if (errno != ENOENT) {
+                error = "read has a malformed RG tag";
+                return false;
+            }
+        } else if (rg[0] != 'Z') {
+            error = "read has a malformed RG tag";
             return false;
         }
     }
-    if (!policy.drop_rg && !append_aux(destination, source, "RG", true, error)) {
+
+    if (bam_copy1(destination, source) == nullptr) {
+        error = "cannot copy a BAM record";
+        return false;
+    }
+
+    if (!policy.keep_name && bam_set_qname(destination, "*") < 0) {
+        error = "cannot rewrite a read name";
+        return false;
+    }
+
+    if (policy.drop_seq) {
+        const int sequence_length = destination->core.l_qseq;
+        if (sequence_length > 0) {
+            std::uint8_t *data = destination->data;
+            std::uint8_t *sequence = bam_get_seq(destination);
+            std::uint8_t *aux = bam_get_aux(destination);
+            const std::size_t sequence_offset =
+                static_cast<std::size_t>(sequence - data);
+            const std::size_t aux_offset =
+                static_cast<std::size_t>(aux - data);
+            if (sequence_offset > aux_offset ||
+                aux_offset >
+                    static_cast<std::size_t>(destination->l_data)) {
+                error = "malformed BAM record";
+                return false;
+            }
+            const std::size_t tail =
+                static_cast<std::size_t>(destination->l_data) - aux_offset;
+            std::memmove(sequence, aux, tail);
+            destination->l_data =
+                static_cast<int>(sequence_offset + tail);
+            destination->core.l_qseq = 0;
+        }
+    } else if (!policy.keep_qual && destination->core.l_qseq > 0) {
+        std::memset(
+            bam_get_qual(destination),
+            0xff,
+            static_cast<std::size_t>(destination->core.l_qseq)
+        );
+    }
+
+    if (!remove_unwanted_aux(
+            destination, !policy.drop_rg, keep_cg, error
+        )) {
         return false;
     }
     return true;
@@ -273,8 +261,19 @@ int write_slim_bam(
         report("--compression must be between 0 and 9");
         return 2;
     }
+    if (options.drop_seq && options.keep_qual) {
+        report("--keep-qual requires SEQ; drop --drop-seq");
+        return 2;
+    }
     if (same_file(output.input, output.output)) {
         report("input and output are the same file");
+        return 2;
+    }
+
+    std::filesystem::path final_index = output.output;
+    final_index += ".csi";
+    if (same_file(output.input, final_index)) {
+        report("input is the output index path");
         return 2;
     }
 
@@ -293,6 +292,36 @@ int write_slim_bam(
         !std::filesystem::is_regular_file(output.output, filesystem_error)) {
         report("output is not a regular file");
         return 1;
+    }
+
+    filesystem_error.clear();
+    const auto index_status =
+        std::filesystem::symlink_status(final_index, filesystem_error);
+    bool index_exists = false;
+    if (filesystem_error == std::errc::no_such_file_or_directory) {
+        filesystem_error.clear();
+    } else if (filesystem_error) {
+        report(
+            "cannot inspect the output index path: " +
+            filesystem_error.message()
+        );
+        return 1;
+    } else {
+        index_exists = std::filesystem::exists(index_status);
+    }
+    if (index_exists && !std::filesystem::is_symlink(index_status)) {
+        filesystem_error.clear();
+        if (!std::filesystem::is_regular_file(final_index, filesystem_error)) {
+            report("output index path is not a regular file");
+            return 1;
+        }
+        if (filesystem_error) {
+            report(
+                "cannot inspect the output index path: " +
+                filesystem_error.message()
+            );
+            return 1;
+        }
     }
 
     SamFilePtr input(sam_open(output.input.string().c_str(), "r"));
@@ -323,12 +352,16 @@ int write_slim_bam(
 
     HeaderPtr slim_header = build_slim_header(header.get());
     if (!slim_header) {
-        report("'" + output.input.string() + "' has no usable header lines");
+        report("'" + output.input.string() + "' has no usable @SQ lines");
         return 1;
     }
 
     TempFiles temporary;
     temporary.bam = temporary_path_for(output.output);
+    if (temporary.bam.empty()) {
+        report("cannot create a temporary output path");
+        return 1;
+    }
     remove_file(temporary.bam);
 
     SamFilePtr destination(sam_open(temporary.bam.string().c_str(), "wb"));
@@ -416,6 +449,7 @@ int write_slim_bam(
     if (options.index) {
         temporary.index = temporary.bam;
         temporary.index += ".csi";
+        remove_file(temporary.index);
         if (sam_index_build3(
                 temporary.bam.string().c_str(),
                 nullptr,
@@ -441,28 +475,67 @@ int write_slim_bam(
             report("output appeared while writing; refusing to overwrite it");
             return 2;
         }
+        if (filesystem_error) {
+            report(
+                "cannot inspect the output path: " +
+                filesystem_error.message()
+            );
+            return 1;
+        }
     }
 
     std::string error;
+    std::filesystem::path index_backup;
+    bool have_index_backup = false;
+    if (index_exists) {
+        index_backup = temporary_path_for(final_index);
+        if (index_backup.empty()) {
+            report("cannot create a temporary index path");
+            return 1;
+        }
+        if (!replace_file(final_index, index_backup, error)) {
+            report("cannot move the existing index aside: " + error);
+            return 1;
+        }
+        have_index_backup = true;
+    }
+
+    auto restore_index = [&]() {
+        if (!have_index_backup) {
+            return;
+        }
+        std::string restore_error;
+        if (!replace_file(index_backup, final_index, restore_error)) {
+            report("cannot restore the existing index: " + restore_error);
+            return;
+        }
+        have_index_backup = false;
+    };
+
+    if (options.index) {
+        if (!replace_file(temporary.index, final_index, error)) {
+            report(error);
+            restore_index();
+            return 1;
+        }
+        temporary.release_index();
+    }
+
     if (!replace_file(temporary.bam, output.output, error)) {
         report(error);
+        if (options.index && !remove_file(final_index)) {
+            report("cannot remove the new index after a failed replacement");
+        }
+        restore_index();
         return 1;
     }
     temporary.release_bam();
 
-    if (options.index) {
-        std::filesystem::path final_index = output.output;
-        final_index += ".csi";
-        if (!replace_file(temporary.index, final_index, error)) {
-            remove_file(final_index);
-            report(error);
-            return 1;
+    if (have_index_backup) {
+        if (!remove_file(index_backup)) {
+            report("cannot remove the temporary index backup");
         }
-        temporary.release_index();
-    } else {
-        std::filesystem::path stale_index = output.output;
-        stale_index += ".csi";
-        remove_file(stale_index);
+        have_index_backup = false;
     }
 
     if (stats != nullptr) {

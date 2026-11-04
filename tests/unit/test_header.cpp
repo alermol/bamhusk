@@ -46,6 +46,17 @@ void test_header() {
     CHECK(slim_text.find("@CO") == std::string::npos);
     CHECK(slim_text.find("SO:coordinate") != std::string::npos);
 
+    husk::HeaderPtr no_sq = husk_test::make_header("@HD\tVN:1.6\n");
+    CHECK(no_sq != nullptr);
+    CHECK(husk::build_slim_header(no_sq.get()) == nullptr);
+
+    husk::HeaderPtr rg_only = husk_test::make_header(
+        "@HD\tVN:1.6\n"
+        "@RG\tID:s1\tSM:alpha\n"
+    );
+    CHECK(rg_only != nullptr);
+    CHECK(husk::build_slim_header(rg_only.get()) == nullptr);
+
     husk::HeaderPtr two_samples = husk_test::make_header(
         "@HD\tVN:1.6\n"
         "@RG\tID:s1\tSM:alpha\n"
@@ -66,6 +77,27 @@ void test_header() {
         "@RG\tID:s2\n"
     );
     CHECK_EQ(husk::count_distinct_samples(read_groups_without_samples.get()), 2);
+
+    husk::HeaderPtr mixed_samples = husk_test::make_header(
+        "@HD\tVN:1.6\n"
+        "@RG\tID:s1\tSM:alpha\n"
+        "@RG\tID:s2\n"
+    );
+    CHECK_EQ(husk::count_distinct_samples(mixed_samples.get()), 2);
+
+    husk::HeaderPtr one_unknown_sample = husk_test::make_header(
+        "@HD\tVN:1.6\n"
+        "@RG\tID:s1\n"
+    );
+    CHECK_EQ(husk::count_distinct_samples(one_unknown_sample.get()), 1);
+
+    husk::HeaderPtr three_unknown_samples = husk_test::make_header(
+        "@HD\tVN:1.6\n"
+        "@RG\tID:s1\n"
+        "@RG\tID:s2\n"
+        "@RG\tID:s3\n"
+    );
+    CHECK_EQ(husk::count_distinct_samples(three_unknown_samples.get()), 3);
 
     husk::HeaderPtr no_read_groups =
         husk_test::make_header("@HD\tVN:1.6\n@SQ\tSN:chr1\tLN:10\n");

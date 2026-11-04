@@ -74,11 +74,27 @@ sam_to_bam no_usable_header <<'SAM'
 @PG	ID:aligner	PN:test
 SAM
 
+sam_to_bam no_sq <<'SAM'
+@HD	VN:1.6	SO:coordinate
+@RG	ID:s1	SM:sample1
+SAM
+
+sam_to_bam mixed_sample <<'SAM'
+@HD	VN:1.6	SO:coordinate
+@SQ	SN:chr1	LN:100000
+@RG	ID:a	SM:alpha
+@RG	ID:b
+r1	0	chr1	1	60	4M	*	0	0	ACGT	IIII	RG:Z:a
+r2	0	chr1	2	60	4M	*	0	0	ACGT	IIII	RG:Z:b
+SAM
+
 awk 'BEGIN {
     printf "@HD\tVN:1.6\tSO:coordinate\n";
     printf "@SQ\tSN:chr1\tLN:100000\n";
     printf "@RG\tID:s1\tSM:sample1\n";
-    printf "long\t0\tchr1\t1\t60\t70000M\t*\t0\t0\t";
+    printf "long\t0\tchr1\t1\t60\t";
+    for (i = 0; i < 70000; ++i) printf "1M";
+    printf "\t*\t0\t0\t";
     for (i = 0; i < 70000; ++i) printf "A";
     printf "\t";
     for (i = 0; i < 70000; ++i) printf "I";

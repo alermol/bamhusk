@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -25,7 +26,7 @@ struct Options {
     std::filesystem::path output;
 };
 
-enum class Action {
+enum class Action : std::uint8_t {
     Run,
     Help,
     Version,

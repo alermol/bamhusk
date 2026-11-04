@@ -76,7 +76,11 @@ HeaderPtr build_slim_header(const sam_hdr_t *header) {
     if (slim.empty()) {
         return nullptr;
     }
-    return HeaderPtr(sam_hdr_parse(slim.size(), slim.c_str()));
+    HeaderPtr result(sam_hdr_parse(slim.size(), slim.c_str()));
+    if (!result || sam_hdr_nref(result.get()) < 1) {
+        return nullptr;
+    }
+    return result;
 }
 
 int count_distinct_samples(const sam_hdr_t *header) {
@@ -89,7 +93,7 @@ int count_distinct_samples(const sam_hdr_t *header) {
     }
 
     std::set<std::string> samples;
-    int read_groups = 0;
+    int unknown_samples = 0;
     std::string_view remaining(text);
     while (!remaining.empty()) {
         const std::size_t end = remaining.find('\n');
@@ -97,11 +101,17 @@ int count_distinct_samples(const sam_hdr_t *header) {
             end == std::string_view::npos ? remaining : remaining.substr(0, end);
         const std::string_view line = strip_carriage_return(raw);
         if (line.rfind("@RG\t", 0) == 0) {
-            ++read_groups;
+            bool has_sample = false;
             for (const std::string &field : split_tabs(line)) {
                 if (field.rfind("SM:", 0) == 0 && field.size() > 3) {
                     samples.insert(field.substr(3));
+                    has_sample = true;
                 }
+            }
+            if (!has_sample) {
+                // A read group without SM is an unknown sample. Treat each one
+                // as distinct so --drop-rg cannot merge it silently.
+                ++unknown_samples;
             }
         }
         if (end == std::string_view::npos) {
@@ -110,10 +120,7 @@ int count_distinct_samples(const sam_hdr_t *header) {
         remaining.remove_prefix(end + 1);
     }
 
-    if (!samples.empty()) {
-        return static_cast<int>(samples.size());
-    }
-    return read_groups;
+    return static_cast<int>(samples.size() + unknown_samples);
 }
 
 }  // namespace husk

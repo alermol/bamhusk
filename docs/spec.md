@@ -57,6 +57,9 @@ Options:
   --help              Print usage
 ```
 
+`--` ends option parsing. `-h` is an alias for `--help`. Value options accept
+both `--option value` and `--option=value`.
+
 ### Exit codes
 
 | Code | Meaning |
@@ -66,30 +69,39 @@ Options:
 | 2 | Usage error |
 | 3 | Verification failure |
 
+On success, Husk writes a one-line read and byte summary to stderr. Standard
+output is used only by `--help` and `--version`.
+
 ### Defaults
 
 - Drop `QUAL`, read names (written as `*`), and all optional tags except `RG`.
 - Keep `SEQ`.
 - Refuse to overwrite an existing output unless `--force` is given.
 - Refuse an output path that resolves to the input path.
-- Write to `<out>.tmp.<pid>` in the output directory and rename atomically
-  after a successful close.
+- Write to `<out>.tmp.<pid>` in the output directory (or a numbered variant
+  if that name is occupied) and rename atomically after a successful close.
 - Remove the temporary file on error or `SIGINT`.
 - `--keep-qual` with `--drop-seq` is a usage error.
 - `--threads` must be at least 1; `--compression` must be in 0-9.
-- `--drop-rg` is only valid for single-sample BAMs. Husk refuses when the
-  header declares more than one distinct `SM` value.
+- `--drop-rg` is only valid when the header can be shown to describe a single
+  sample. Husk refuses when the header declares more than one distinct `SM`
+  value; a read group without a non-empty `SM` counts as an unknown sample.
+- An input path that is also the output `.csi` path is a usage error.
 
-A failed run leaves any pre-existing output file untouched. Replacing a BAM
-without `--index` removes a stale adjacent `.csi`; with `--index`, the index is
-rebuilt and replaced after the BAM.
+A failed run leaves any pre-existing BAM and adjacent index untouched. The
+BAM and index are moved into place as one finalization step; if a replacement
+fails, the previous index is restored. Replacing a BAM without `--index`
+removes a stale adjacent `.csi`.
 
 ## 5. Input requirements
 
 - BAM only. CRAM and SAM input are rejected in v0.1.
 - The input must be coordinate-sorted. Husk does not re-sort.
-- The input header must contain at least one of `@HD`, `@SQ`, or `@RG`.
-- An empty BAM with a valid header is valid input and produces an empty BAM.
+- The input header must contain at least one `@SQ` line. A BAM without
+  reference targets is rejected because its output would fail
+  `samtools quickcheck`.
+- An empty BAM with at least one `@SQ` line is valid input and produces an
+  empty BAM.
 
 ## 6. Header policy
 
@@ -103,7 +115,7 @@ Drop every other header line, including `@PG`, `@CO`, and unknown record
 types. No synthetic lines are added. Kept lines are copied byte-for-byte, so
 `@HD SO:coordinate` and all `@SQ`/`@RG` fields survive.
 
-If no header line survives, exit 1.
+If no `@SQ` line is present, exit 1.
 
 ## 7. Record policy
 
@@ -155,10 +167,10 @@ A release is identified by a tag `v<version>` and contains:
 |---|---|
 | `husk-<version>-linux-x86_64` | Static Linux binary |
 | `husk-<version>-linux-aarch64` | Static Linux binary |
-| `husk-<version>-macos-universal2` | Signed and notarised macOS binary |
+| `husk-<version>-macos-universal2` | Signed macOS binary; notarised when Apple credentials are configured |
 | `husk-<version>-windows-x86_64.exe` | Windows binary |
 | `bamhusk-<version>-src.tar.gz` | Source tarball |
-| `SHA256SUMS` | Checksums for every asset |
+| `SHA256SUMS` | Checksums for the binaries and source tarball |
 | `manifest.json` | Machine-readable asset index |
 
 `manifest.json` uses schema 1:
@@ -182,10 +194,14 @@ A release is identified by a tag `v<version>` and contains:
 ```
 
 Every binary asset appears once in `assets` with `os`, `arch`, `url`,
-`sha256`, and `size`; the source tarball is named by `source`. The manifest
-validates against the published JSON schema. Checksums in `manifest.json` and
-`SHA256SUMS` agree. Binaries are release assets only and are never committed
-to git.
+`sha256`, and `size`; the source tarball is named by `source` and has a
+checksum in `SHA256SUMS`. The manifest validates against the published JSON
+schema. Checksums in `manifest.json` and `SHA256SUMS` agree. Binaries are
+release assets only and are never committed to git.
+
+The Docker workflow additionally publishes a multi-arch image to
+`ghcr.io/alermol/bamhusk`. The image is not part of the signed release asset
+set.
 
 ## 10. Consumer integration requirements
 
@@ -206,7 +222,8 @@ v0.1.0 is accepted when:
 - All validation rules in section 8 hold on synthetic and real BAMs.
 - Downstream window-metric counts are identical before and after slimming.
 - The build matrix produces every asset in section 9.
-- Every asset has a matching checksum and manifest entry.
+- Every binary asset has a matching checksum and manifest entry; the source
+  tarball has a matching checksum in `SHA256SUMS`.
 - A new user can build from source, verify a release, slim a BAM, and upload
   it without reading the implementation.
 

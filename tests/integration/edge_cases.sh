@@ -26,7 +26,7 @@ checksum() {
 }
 
 no_temp_files() {
-    ! find "${work}" -maxdepth 1 -name '*.tmp.*' -print -quit | grep -q .
+    [[ -z "$(find "${work}" -maxdepth 1 -name '*.tmp.*' -print -quit)" ]]
 }
 
 # Empty BAM with a valid header.
@@ -47,7 +47,8 @@ fi
 # Missing RG is valid; the record simply has no RG tag.
 "${husk}" "${fixtures}/missing_rg.bam" "${work}/missing-rg.bam"
 samtools quickcheck -v "${work}/missing-rg.bam"
-if samtools view --no-PG "${work}/missing-rg.bam" | cut -f12- | grep -q 'RG:'; then
+if samtools view --no-PG "${work}/missing-rg.bam" | cut -f12- |
+    grep 'RG:' >/dev/null; then
     fail "missing-rg output gained an RG tag"
 fi
 
@@ -81,6 +82,19 @@ if "${husk}" "${fixtures}/no_usable_header.bam" \
 fi
 [[ ! -e "${work}/no-usable.bam" ]] || fail "unusable header left output"
 
+# A header without @SQ cannot satisfy samtools quickcheck.
+if "${husk}" "${fixtures}/no_sq.bam" "${work}/no-sq.bam" 2>/dev/null; then
+    fail "header without @SQ was accepted"
+fi
+[[ ! -e "${work}/no-sq.bam" ]] || fail "header without @SQ left output"
+
+# A read group without SM is an unknown sample and cannot be merged.
+if "${husk}" --drop-rg "${fixtures}/mixed_sample.bam" \
+    "${work}/mixed-drop.bam" 2>/dev/null; then
+    fail "--drop-rg merged an unknown sample"
+fi
+[[ ! -e "${work}/mixed-drop.bam" ]] || fail "mixed-sample refusal left output"
+
 # Input and output must be different files.
 before=$(checksum "${fixtures}/basic.bam")
 if "${husk}" "${fixtures}/basic.bam" "${fixtures}/basic.bam" 2>/dev/null; then
@@ -88,6 +102,26 @@ if "${husk}" "${fixtures}/basic.bam" "${fixtures}/basic.bam" 2>/dev/null; then
 fi
 after=$(checksum "${fixtures}/basic.bam")
 [[ "${before}" == "${after}" ]] || fail "input == output changed the input"
+
+# An input BAM that is also the output index path must not be removed.
+cp "${fixtures}/basic.bam" "${work}/collision.bam.csi"
+before=$(checksum "${work}/collision.bam.csi")
+if "${husk}" "${work}/collision.bam.csi" "${work}/collision.bam" 2>/dev/null; then
+    fail "input at the output index path was accepted"
+fi
+after=$(checksum "${work}/collision.bam.csi")
+[[ "${before}" == "${after}" ]] || fail "input at the output index path was changed"
+
+# An unusable index path must not replace the existing BAM.
+printf 'previous output\n' >"${work}/index-directory.bam"
+mkdir "${work}/index-directory.bam.csi"
+before=$(checksum "${work}/index-directory.bam")
+if "${husk}" --force --index "${fixtures}/basic.bam" \
+    "${work}/index-directory.bam" 2>/dev/null; then
+    fail "directory index path was accepted"
+fi
+after=$(checksum "${work}/index-directory.bam")
+[[ "${before}" == "${after}" ]] || fail "failed index run replaced the old BAM"
 
 # SAM input is rejected.
 cat >"${work}/input.sam" <<'SAM'
@@ -127,8 +161,8 @@ if "${husk}" --force "${fixtures}/basic.bam" \
 fi
 
 # Version and help.
-"${husk}" --version | grep -q '^husk [0-9]'
-"${husk}" --help | grep -q '^Usage: husk'
+"${husk}" --version | grep '^husk [0-9]' >/dev/null
+"${husk}" --help | grep '^Usage: husk' >/dev/null
 
 no_temp_files || fail "a failure left a temporary file"
 

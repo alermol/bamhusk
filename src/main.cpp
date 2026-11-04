@@ -8,17 +8,19 @@ namespace {
 
 void print_stats(const husk::SlimStats &stats) {
     if (stats.input_bytes > 0 && stats.output_bytes >= 0) {
-        const double smaller =
+        const double difference =
             100.0 *
             static_cast<double>(stats.input_bytes - stats.output_bytes) /
             static_cast<double>(stats.input_bytes);
+        const char *direction = difference >= 0 ? "smaller" : "larger";
         std::fprintf(
             stderr,
-            "husk: %lld reads; %lld -> %lld bytes (%.1f%% smaller)\n",
+            "husk: %lld reads; %lld -> %lld bytes (%.1f%% %s)\n",
             static_cast<long long>(stats.reads),
             static_cast<long long>(stats.input_bytes),
             static_cast<long long>(stats.output_bytes),
-            smaller
+            difference >= 0 ? difference : -difference,
+            direction
         );
     } else {
         std::fprintf(

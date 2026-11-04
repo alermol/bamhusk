@@ -364,4 +364,142 @@ void test_bam_slim() {
         std::string error;
         CHECK(husk::verify_bam(output, 2, false, error));
     }
+
+    {
+        const auto header_only = directory.path / "header-only.bam";
+        husk_test::write_bam(
+            header_only, "@HD\tVN:1.6\tSO:coordinate\n", {}
+        );
+        const auto output = directory.path / "header-only-out.bam";
+        CHECK_EQ(
+            husk::write_slim_bam(
+                output_for(header_only, output), husk::SlimOptions{}, nullptr
+            ),
+            1
+        );
+        CHECK(!std::filesystem::exists(output));
+    }
+
+    {
+        const auto mixed = directory.path / "mixed-sample.bam";
+        husk_test::write_bam(
+            mixed,
+            "@HD\tVN:1.6\tSO:coordinate\n"
+            "@SQ\tSN:chr1\tLN:1000\n"
+            "@RG\tID:a\tSM:alpha\n"
+            "@RG\tID:b\n",
+            {
+                "r1\t0\tchr1\t1\t60\t4M\t*\t0\t0\tACGT\tIIII\tRG:Z:a",
+                "r2\t0\tchr1\t2\t60\t4M\t*\t0\t0\tACGT\tIIII\tRG:Z:b",
+            }
+        );
+        husk::SlimOptions options;
+        options.drop_rg = true;
+        const auto output = directory.path / "mixed-sample-out.bam";
+        CHECK_EQ(
+            husk::write_slim_bam(output_for(mixed, output), options, nullptr),
+            2
+        );
+        CHECK(!std::filesystem::exists(output));
+    }
+
+    {
+        husk::SlimOptions options;
+        options.drop_seq = true;
+        options.keep_qual = true;
+        const auto output = directory.path / "invalid-combo.bam";
+        CHECK_EQ(
+            husk::write_slim_bam(output_for(input, output), options, nullptr),
+            2
+        );
+        CHECK(!std::filesystem::exists(output));
+    }
+
+    {
+        const auto collision = directory.path / "collision.bam.csi";
+        husk_test::write_bam(collision, kHeader, kRecords);
+        const auto before = std::filesystem::file_size(collision);
+        const auto output = directory.path / "collision.bam";
+        CHECK_EQ(
+            husk::write_slim_bam(
+                output_for(collision, output), husk::SlimOptions{}, nullptr
+            ),
+            2
+        );
+        CHECK(std::filesystem::exists(collision));
+        CHECK_EQ(std::filesystem::file_size(collision), before);
+        CHECK(!std::filesystem::exists(output));
+    }
+
+    {
+        const auto output = directory.path / "index-directory.bam";
+        {
+            std::FILE *file = std::fopen(output.string().c_str(), "w");
+            CHECK(file != nullptr);
+            if (file != nullptr) {
+                std::fputs("old\n", file);
+                std::fclose(file);
+            }
+        }
+        const auto index_path = directory.path / "index-directory.bam.csi";
+        CHECK(std::filesystem::create_directory(index_path));
+        const auto before = std::filesystem::file_size(output);
+        husk::OutputOptions forced = output_for(input, output);
+        forced.force = true;
+        husk::SlimOptions options;
+        options.index = true;
+        CHECK_EQ(
+            husk::write_slim_bam(forced, options, nullptr),
+            1
+        );
+        CHECK_EQ(std::filesystem::file_size(output), before);
+        std::filesystem::remove_all(index_path);
+    }
+
+    {
+        const auto output = directory.path / "sibling.bam";
+        const auto input_path =
+            directory.path /
+            ("sibling.bam.tmp." + std::to_string(husk::process_id()) + ".csi");
+        husk_test::write_bam(input_path, kHeader, kRecords);
+        const auto before = std::filesystem::file_size(input_path);
+        CHECK_EQ(
+            husk::write_slim_bam(
+                output_for(input_path, output), husk::SlimOptions{}, nullptr
+            ),
+            0
+        );
+        CHECK(std::filesystem::exists(input_path));
+        CHECK_EQ(std::filesystem::file_size(input_path), before);
+        std::string error;
+        CHECK(husk::verify_bam(output, 2, false, error));
+    }
+
+    {
+        const auto output = directory.path / "symlink-temp.bam";
+        const auto victim = directory.path / "missing-victim";
+        const auto base =
+            directory.path /
+            ("symlink-temp.bam.tmp." + std::to_string(husk::process_id()));
+        std::error_code link_error;
+        std::filesystem::create_symlink(victim, base, link_error);
+        if (!link_error) {
+            std::filesystem::create_symlink(
+                victim, base.string() + ".csi", link_error
+            );
+        }
+        if (!link_error) {
+            husk::SlimOptions options;
+            options.index = true;
+            CHECK_EQ(
+                husk::write_slim_bam(
+                    output_for(input, output), options, nullptr
+                ),
+                0
+            );
+            CHECK(!std::filesystem::exists(victim));
+            CHECK(std::filesystem::exists(output));
+            CHECK(std::filesystem::exists(output.string() + ".csi"));
+        }
+    }
 }
