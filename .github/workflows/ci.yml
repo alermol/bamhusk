@@ -1,0 +1,209 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: husk
+          create-args: >-
+            cmake
+            ninja
+            htslib>=1.25
+            samtools
+            python
+          condarc: |
+            channels:
+              - conda-forge
+            channel_priority: strict
+
+      - name: Configure
+        run: cmake --preset default
+
+      - name: Build
+        run: cmake --build --preset default
+
+      - name: Test
+        run: ctest --preset default --output-on-failure
+
+  real-data:
+    name: Public real-data parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: husk
+          create-args: >-
+            cmake
+            ninja
+            htslib>=1.25
+            samtools
+          condarc: |
+            channels:
+              - conda-forge
+            channel_priority: strict
+
+      - name: Build
+        shell: bash -el {0}
+        run: |
+          cmake --preset default
+          cmake --build --preset default
+
+      - name: Fetch public BAM
+        shell: bash -el {0}
+        run: |
+          ./scripts/fetch-real-data.sh \
+            https://github.com/samtools/htslib/raw/1.25/test/mpileup/small.bam \
+            /tmp/husk-real-data/small.bam
+
+      - name: Compare window metrics
+        shell: bash -el {0}
+        run: ./scripts/run-real-parity.sh /tmp/husk-real-data/small.bam
+
+  sanitizers:
+    name: ASan + UBSan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: husk
+          create-args: >-
+            cmake
+            ninja
+            htslib>=1.25
+            samtools
+            python
+          condarc: |
+            channels:
+              - conda-forge
+            channel_priority: strict
+
+      - name: Configure
+        shell: bash -el {0}
+        run: |
+          cmake -S . -B build-asan -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DHUSK_SANITIZE=ON
+
+      - name: Build
+        shell: bash -el {0}
+        run: cmake --build build-asan --parallel 4
+
+      - name: Test
+        shell: bash -el {0}
+        run: ctest --test-dir build-asan --output-on-failure
+
+  fuzz:
+    name: Fuzz smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: husk
+          create-args: >-
+            cmake
+            ninja
+            htslib>=1.25
+            samtools
+          condarc: |
+            channels:
+              - conda-forge
+            channel_priority: strict
+
+      - name: Configure
+        shell: bash -el {0}
+        run: |
+          cmake -S . -B build-fuzz -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DHUSK_BUILD_FUZZERS=ON \
+            -DHUSK_SANITIZE=ON \
+            -DBUILD_TESTING=OFF
+
+      - name: Build
+        shell: bash -el {0}
+        run: cmake --build build-fuzz --parallel 4
+
+      - name: Seed BAM corpus
+        shell: bash -el {0}
+        run: |
+          ./scripts/make-fixtures.sh /tmp/husk-fixtures
+          mkdir -p fuzz-corpus/bam
+          cp /tmp/husk-fixtures/*.bam fuzz-corpus/bam/
+
+      - name: Run fuzzers
+        shell: bash -el {0}
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: |
+          mkdir -p fuzz-corpus/cli fuzz-corpus/header fuzz-corpus/bam
+          ./build-fuzz/fuzz_cli \
+            -max_total_time=60 -max_len=512 fuzz-corpus/cli
+          ./build-fuzz/fuzz_header \
+            -max_total_time=60 -max_len=4096 fuzz-corpus/header
+          ./build-fuzz/fuzz_bam \
+            -max_total_time=60 -max_len=65536 fuzz-corpus/bam
+
+  static-linux:
+    name: Static Linux x86_64
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build pkg-config \
+            zlib1g-dev curl bzip2 samtools
+
+      - uses: actions/cache@v4
+        with:
+          path: .cache
+          key: htslib-1.25-${{ runner.os }}-${{ hashFiles('scripts/build-static.sh') }}
+
+      - name: Build static binary
+        run: JOBS=4 ./scripts/build-static.sh
+
+      - name: Verify static link
+        run: |
+          binary=$(ls dist/husk-*-linux-x86_64)
+          file "${binary}"
+          if ldd "${binary}" 2>&1 | grep -q libhts; then
+            echo "unexpected libhts dependency" >&2
+            exit 1
+          fi
+          ./tests/integration/smoke.sh "${binary}"

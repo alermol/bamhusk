@@ -1,0 +1,4 @@
+#pragma once
+
+#define HUSK_VERSION "@PROJECT_VERSION@"
+#define HUSK_GIT_SHA "@HUSK_GIT_SHA@"
