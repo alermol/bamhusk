@@ -58,8 +58,8 @@ cmake -S "${root}" -B "${build_dir}" -G Ninja \
 cmake --build "${build_dir}" --parallel "${jobs}"
 
 binary="${build_dir}/husk"
-if ! lipo -info "${binary}" | grep -q 'x86_64' ||
-    ! lipo -info "${binary}" | grep -q 'arm64'; then
+if ! lipo -info "${binary}" | grep 'x86_64' >/dev/null ||
+    ! lipo -info "${binary}" | grep 'arm64' >/dev/null; then
     echo "build-macos-universal: binary is not universal2" >&2
     lipo -info "${binary}" >&2
     exit 1

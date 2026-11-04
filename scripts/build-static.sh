@@ -18,16 +18,17 @@ if ! command -v cmake >/dev/null 2>&1; then
     echo "build-static: cmake is required" >&2
     exit 1
 fi
-if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
-    echo "build-static: curl or wget is required" >&2
-    exit 1
-fi
 
 if [[ ! -f "${htslib_prefix}/lib/libhts.a" ]]; then
     cache="${root}/.cache"
     mkdir -p "${cache}"
     tarball="${cache}/htslib-${htslib_version}.tar.bz2"
     if [[ ! -f "${tarball}" ]]; then
+        if ! command -v curl >/dev/null 2>&1 &&
+            ! command -v wget >/dev/null 2>&1; then
+            echo "build-static: curl or wget is required" >&2
+            exit 1
+        fi
         url="https://github.com/samtools/htslib/releases/download/${htslib_version}/htslib-${htslib_version}.tar.bz2"
         if command -v curl >/dev/null 2>&1; then
             curl -fsSL "${url}" -o "${tarball}"
@@ -64,7 +65,7 @@ cmake -S "${root}" -B "${build_dir}" -G Ninja \
 cmake --build "${build_dir}" --parallel "${jobs}"
 
 binary="${build_dir}/husk"
-if ldd "${binary}" 2>&1 | grep -q 'libhts'; then
+if ldd "${binary}" 2>&1 | grep 'libhts' >/dev/null; then
     echo "build-static: binary still depends on libhts" >&2
     exit 1
 fi

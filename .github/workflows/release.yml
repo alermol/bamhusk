@@ -108,7 +108,8 @@ jobs:
             --team-id "${APPLE_TEAM_ID}" \
             --password "${APPLE_APP_PASSWORD}" \
             --wait
-          xcrun stapler staple "${asset}"
+          # A standalone Mach-O file cannot be stapled. Gatekeeper checks the
+          # notarization ticket online when the binary is first run.
           rm "${asset}.zip"
       - uses: actions/upload-artifact@v4
         with:

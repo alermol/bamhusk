@@ -10,6 +10,7 @@ project(
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 option(HUSK_STATIC "Link htslib and its dependencies statically" OFF)
 option(HUSK_FULLY_STATIC "Pass -static to the husk executable where supported" OFF)
@@ -29,6 +30,20 @@ if(Git_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
     )
     if(_husk_git_result EQUAL 0 AND _husk_git_sha)
         set(HUSK_GIT_SHA "${_husk_git_sha}")
+    endif()
+endif()
+
+# Source tarballs created with `git archive` have no .git directory. The
+# exported GIT_SHA file carries the commit through export-subst.
+if(HUSK_GIT_SHA STREQUAL "unknown"
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/GIT_SHA")
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/GIT_SHA" _husk_source_sha)
+    string(STRIP "${_husk_source_sha}" _husk_source_sha)
+    string(LENGTH "${_husk_source_sha}" _husk_source_sha_length)
+    if(_husk_source_sha_length GREATER 6
+       AND _husk_source_sha_length LESS 41
+       AND _husk_source_sha MATCHES "^[0-9a-fA-F]+$")
+        set(HUSK_GIT_SHA "${_husk_source_sha}")
     endif()
 endif()
 

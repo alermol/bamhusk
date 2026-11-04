@@ -15,6 +15,10 @@ RUN apt-get update \
 
 WORKDIR /src
 COPY . .
+ARG HUSK_GIT_SHA=unknown
+RUN if [ "${HUSK_GIT_SHA}" != "unknown" ]; then \
+        printf '%s\n' "${HUSK_GIT_SHA}" > GIT_SHA; \
+    fi
 RUN HTSLIB_PREFIX=/opt/htslib JOBS=4 ./scripts/build-static.sh
 
 FROM scratch

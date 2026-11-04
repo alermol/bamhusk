@@ -30,7 +30,10 @@ def main() -> int:
     schema = json.loads(args.schema.read_text(encoding="utf-8"))
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     validator = Draft202012Validator(schema, format_checker=FormatChecker())
-    errors = sorted(validator.iter_errors(manifest), key=lambda error: error.path)
+    errors = sorted(
+        validator.iter_errors(manifest),
+        key=lambda error: list(error.path),
+    )
     if errors:
         for error in errors:
             location = ".".join(str(part) for part in error.path) or "<root>"

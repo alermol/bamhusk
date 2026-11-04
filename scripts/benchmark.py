@@ -114,8 +114,8 @@ def main() -> int:
 
     try:
         for name, (command, output) in commands.items():
-            for _ in range(1):
-                run_once(command, None)
+            # Warm the page cache and the process image before timing.
+            run_once(command, None)
             times = []
             rss = None
             for _ in range(args.runs):

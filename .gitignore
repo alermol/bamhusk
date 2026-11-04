@@ -66,6 +66,9 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+dist/
+fuzz-corpus/
+fuzz-artifacts/
 
 # Python
 __pycache__/

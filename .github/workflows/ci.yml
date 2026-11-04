@@ -218,7 +218,7 @@ jobs:
         run: |
           binary=$(ls dist/husk-*-linux-x86_64)
           file "${binary}"
-          if ldd "${binary}" 2>&1 | grep -q libhts; then
+          if ldd "${binary}" 2>&1 | grep libhts >/dev/null; then
             echo "unexpected libhts dependency" >&2
             exit 1
           fi

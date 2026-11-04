@@ -54,16 +54,25 @@ def collect_assets(directory: Path, version: str) -> list[dict[str, object]]:
     return assets
 
 
-def checksum_lines(directory: Path, names: list[str]) -> str:
-    lines = []
-    for name in sorted(names):
-        path = directory / name
-        lines.append(f"{sha256(path)}  {name}")
+def checksum_lines(
+    directory: Path,
+    assets: list[dict[str, object]],
+    source: str | None,
+) -> str:
+    entries = [
+        (str(asset["file"]), str(asset["sha256"])) for asset in assets
+    ]
+    if source is not None:
+        entries.append((source, sha256(directory / source)))
+    lines = [f"{digest}  {name}" for name, digest in sorted(entries)]
     return "\n".join(lines) + "\n"
 
 
-def build_manifest(directory: Path, version: str, base_url: str) -> dict:
-    assets = collect_assets(directory, version)
+def build_manifest(
+    assets: list[dict[str, object]],
+    version: str,
+    base_url: str,
+) -> dict:
     manifest = {
         "schema": 1,
         "tool": "husk",
@@ -86,10 +95,10 @@ def build_manifest(directory: Path, version: str, base_url: str) -> dict:
 def write_outputs(
     directory: Path,
     manifest: dict,
+    assets: list[dict[str, object]],
     require_all: bool,
 ) -> None:
     version = manifest["version"]
-    assets = collect_assets(directory, version)
     present = {
         f"{asset['os']}-{asset['arch']}" for asset in assets
     }
@@ -102,20 +111,10 @@ def write_outputs(
     if not assets:
         raise SystemExit("no release assets found")
 
-    for asset in assets:
-        (directory / f"{asset['file']}.sha256").write_text(
-            f"{asset['sha256']}  {asset['file']}\n", encoding="utf-8"
-        )
-
     source = f"bamhusk-{version}-src.tar.gz"
-    names = [str(asset["file"]) for asset in assets]
-    if (directory / source).is_file():
-        names.append(source)
-        (directory / f"{source}.sha256").write_text(
-            f"{sha256(directory / source)}  {source}\n", encoding="utf-8"
-        )
+    source_name = source if (directory / source).is_file() else None
     (directory / "SHA256SUMS").write_text(
-        checksum_lines(directory, names), encoding="utf-8"
+        checksum_lines(directory, assets, source_name), encoding="utf-8"
     )
     (directory / "manifest.json").write_text(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
@@ -192,8 +191,9 @@ def main() -> int:
     base_url = args.base_url or (
         f"https://github.com/{args.repo}/releases/download/v{args.version}"
     )
-    manifest = build_manifest(directory, args.version, base_url.rstrip("/"))
-    write_outputs(directory, manifest, args.require_all)
+    assets = collect_assets(directory, args.version)
+    manifest = build_manifest(assets, args.version, base_url.rstrip("/"))
+    write_outputs(directory, manifest, assets, args.require_all)
     print(f"wrote manifest for {len(manifest['assets'])} asset(s)")
     return 0
 
