@@ -70,15 +70,17 @@ Notarisation runs in the release workflow when Apple secrets are configured.
 
 ## Windows build
 
-Use an MSYS2 MinGW64 shell with `gcc`, `cmake`, `ninja`, `pkgconf`, and
-`mingw-w64-x86_64-htslib` installed:
+Use an MSYS2 MinGW64 shell with `gcc`, `cmake`, `ninja`, `pkgconf`, `make`,
+`bzip2`, `mingw-w64-x86_64-zlib`, `mingw-w64-x86_64-libsystre`, and
+`mingw-w64-x86_64-samtools` installed:
 
 ```sh
 bash scripts/build-windows.sh
 ```
 
-The script requests a fully static MinGW build. The release workflow runs the
-same script under `msys2/setup-msys2`.
+The script builds htslib 1.25 from source with libcurl/S3, bzip2, lzma, and
+libdeflate disabled, then requests a fully static MinGW build. The release
+workflow runs the same script under `msys2/setup-msys2`.
 
 ## Sanitizers and fuzzers
 

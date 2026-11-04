@@ -89,6 +89,23 @@ if(HTSlib_FOUND AND NOT TARGET HTSlib::htslib)
             PROPERTY INTERFACE_LINK_LIBRARIES ${_htslib_link_libraries}
         )
     endif()
+
+    # htslib.pc omits Windows-only static dependencies. The Windows build
+    # disables libcurl/S3, so only sockets and the POSIX regex compatibility
+    # library (libsystre/libtre) are needed.
+    if(HUSK_STATIC AND WIN32)
+        pkg_check_modules(PC_REGEX QUIET regex)
+        if(PC_REGEX_FOUND AND PC_REGEX_STATIC_LIBRARIES)
+            list(APPEND _htslib_link_libraries ${PC_REGEX_STATIC_LIBRARIES})
+        else()
+            list(APPEND _htslib_link_libraries regex tre intl)
+        endif()
+        list(APPEND _htslib_link_libraries ws2_32)
+        set_property(
+            TARGET HTSlib::htslib
+            PROPERTY INTERFACE_LINK_LIBRARIES ${_htslib_link_libraries}
+        )
+    endif()
 endif()
 
 mark_as_advanced(HTSlib_INCLUDE_DIR HTSlib_LIBRARY)
