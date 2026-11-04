@@ -74,7 +74,6 @@ platform-specific commands. Never download or execute a binary automatically.
 
 ## Documentation
 
-- [`docs/release-notes/v0.1.0.md`](docs/release-notes/v0.1.0.md)
 - [`docs/build.md`](docs/build.md)
 - [`docs/verification.md`](docs/verification.md)
 - [`docs/release.md`](docs/release.md)
