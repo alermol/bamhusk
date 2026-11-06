@@ -18,16 +18,16 @@ fail() {
 
 mkdir -p "${work}/dist"
 for name in \
-    husk-0.1.0-linux-x86_64 \
-    husk-0.1.0-linux-aarch64 \
-    husk-0.1.0-macos-universal2 \
-    husk-0.1.0-windows-x86_64.exe \
-    bamhusk-0.1.0-src.tar.gz; do
+    husk-0.2.0-linux-x86_64 \
+    husk-0.2.0-linux-aarch64 \
+    husk-0.2.0-macos-universal2 \
+    husk-0.2.0-windows-x86_64.exe \
+    bamhusk-0.2.0-src.tar.gz; do
     printf 'fixture %s\n' "${name}" >"${work}/dist/${name}"
 done
 
 python3 "${root}/scripts/make-manifest.py" \
-    --dir "${work}/dist" --version 0.1.0 --require-all
+    --dir "${work}/dist" --version 0.2.0 --require-all
 
 python3 - "${work}/dist" <<'PY'
 import json
@@ -38,8 +38,8 @@ directory = Path(sys.argv[1])
 manifest = json.loads((directory / "manifest.json").read_text())
 assert manifest["schema"] == 1
 assert manifest["tool"] == "husk"
-assert manifest["version"] == "0.1.0"
-assert manifest["source"].endswith("bamhusk-0.1.0-src.tar.gz")
+assert manifest["version"] == "0.2.0"
+assert manifest["source"].endswith("bamhusk-0.2.0-src.tar.gz")
 assert len(manifest["assets"]) == 4
 assert {asset["os"] for asset in manifest["assets"]} == {
     "linux", "macos", "windows"
@@ -62,14 +62,14 @@ fi
 # Regeneration is deterministic.
 cp "${work}/dist/manifest.json" "${work}/manifest.first"
 python3 "${root}/scripts/make-manifest.py" \
-    --dir "${work}/dist" --version 0.1.0 --require-all
+    --dir "${work}/dist" --version 0.2.0 --require-all
 cmp "${work}/manifest.first" "${work}/dist/manifest.json" ||
     fail "manifest generation is not deterministic"
 
 # A missing platform is rejected when --require-all is used.
-rm "${work}/dist/husk-0.1.0-linux-aarch64"
+rm "${work}/dist/husk-0.2.0-linux-aarch64"
 if python3 "${root}/scripts/make-manifest.py" \
-    --dir "${work}/dist" --version 0.1.0 --require-all 2>/dev/null; then
+    --dir "${work}/dist" --version 0.2.0 --require-all 2>/dev/null; then
     fail "missing platform was accepted"
 fi
 

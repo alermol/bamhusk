@@ -1,6 +1,6 @@
 # Husk specification
 
-**Status:** v0.1.0 contract.
+**Status:** v0.2.0 contract.
 
 ## 1. Purpose
 
@@ -230,13 +230,13 @@ A release is identified by a tag `v<version>` and contains:
 {
   "schema": 1,
   "tool": "husk",
-  "version": "0.1.0",
-  "source": "https://github.com/alermol/bamhusk/releases/download/v0.1.0/bamhusk-0.1.0-src.tar.gz",
+  "version": "0.2.0",
+  "source": "https://github.com/alermol/bamhusk/releases/download/v0.2.0/bamhusk-0.2.0-src.tar.gz",
   "assets": [
     {
       "os": "linux",
       "arch": "x86_64",
-      "url": "https://github.com/alermol/bamhusk/releases/download/v0.1.0/husk-0.1.0-linux-x86_64",
+      "url": "https://github.com/alermol/bamhusk/releases/download/v0.2.0/husk-0.2.0-linux-x86_64",
       "sha256": "...",
       "size": 1234567
     }
@@ -268,7 +268,7 @@ The consuming application:
 
 ## 11. Acceptance
 
-v0.1.0 is accepted when:
+v0.2.0 is accepted when:
 
 - All validation rules in section 8 hold on synthetic and real BAMs.
 - Downstream window-metric counts are identical before and after slimming
