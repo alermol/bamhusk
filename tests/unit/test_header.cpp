@@ -102,4 +102,32 @@ void test_header() {
     husk::HeaderPtr no_read_groups =
         husk_test::make_header("@HD\tVN:1.6\n@SQ\tSN:chr1\tLN:10\n");
     CHECK_EQ(husk::count_distinct_samples(no_read_groups.get()), 0);
+
+    {
+        const auto samples = husk::read_group_samples(two_samples.get());
+        CHECK_EQ(samples.size(), std::size_t{2});
+        CHECK_EQ(samples.at("s1"), std::string("alpha"));
+        CHECK_EQ(samples.at("s2"), std::string("beta"));
+    }
+    {
+        const auto samples = husk::read_group_samples(one_sample.get());
+        CHECK_EQ(samples.size(), std::size_t{2});
+        CHECK_EQ(samples.at("s1"), std::string("alpha"));
+        CHECK_EQ(samples.at("s2"), std::string("alpha"));
+    }
+    {
+        const auto samples = husk::read_group_samples(mixed_samples.get());
+        CHECK_EQ(samples.size(), std::size_t{1});
+        CHECK_EQ(samples.at("s1"), std::string("alpha"));
+        CHECK(samples.find("s2") == samples.end());
+    }
+    {
+        const auto samples =
+            husk::read_group_samples(read_groups_without_samples.get());
+        CHECK(samples.empty());
+    }
+    {
+        const auto samples = husk::read_group_samples(no_read_groups.get());
+        CHECK(samples.empty());
+    }
 }

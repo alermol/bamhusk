@@ -83,6 +83,46 @@ HeaderPtr build_slim_header(const sam_hdr_t *header) {
     return result;
 }
 
+std::unordered_map<std::string, std::string> read_group_samples(
+    const sam_hdr_t *header
+) {
+    std::unordered_map<std::string, std::string> samples;
+    if (header == nullptr) {
+        return samples;
+    }
+    const char *text = sam_hdr_str(const_cast<sam_hdr_t *>(header));
+    if (text == nullptr) {
+        return samples;
+    }
+
+    std::string_view remaining(text);
+    while (!remaining.empty()) {
+        const std::size_t end = remaining.find('\n');
+        const std::string_view raw =
+            end == std::string_view::npos ? remaining : remaining.substr(0, end);
+        const std::string_view line = strip_carriage_return(raw);
+        if (line.rfind("@RG\t", 0) == 0) {
+            std::string id;
+            std::string sample;
+            for (const std::string &field : split_tabs(line)) {
+                if (field.rfind("ID:", 0) == 0) {
+                    id = field.substr(3);
+                } else if (field.rfind("SM:", 0) == 0) {
+                    sample = field.substr(3);
+                }
+            }
+            if (!id.empty() && !sample.empty()) {
+                samples[id] = sample;
+            }
+        }
+        if (end == std::string_view::npos) {
+            break;
+        }
+        remaining.remove_prefix(end + 1);
+    }
+    return samples;
+}
+
 int count_distinct_samples(const sam_hdr_t *header) {
     if (header == nullptr) {
         return 0;

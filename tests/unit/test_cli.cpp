@@ -28,6 +28,9 @@ void test_cli() {
         CHECK(!result.options.index);
         CHECK(!result.options.force);
         CHECK(!result.options.verify);
+        CHECK(!result.options.downsample.enabled());
+        CHECK(result.options.downsample.mode == husk::DownsampleMode::Total);
+        CHECK_EQ(result.options.downsample.seed, std::uint64_t{0});
     }
 
     {
@@ -90,6 +93,55 @@ void test_cli() {
         CHECK_EQ(result.options.compression, 9);
     }
 
+    {
+        const auto result = parse({
+            "--downsample-fraction", "0.25", "--downsample-mode", "sample",
+            "--downsample-seed", "123", "in.bam", "out.bam",
+        });
+        CHECK(result.error.empty());
+        CHECK(result.options.downsample.fraction.has_value());
+        CHECK_EQ(*result.options.downsample.fraction, 0.25);
+        CHECK(!result.options.downsample.count.has_value());
+        CHECK(result.options.downsample.mode == husk::DownsampleMode::Sample);
+        CHECK_EQ(result.options.downsample.seed, std::uint64_t{123});
+    }
+    {
+        const auto result = parse({
+            "--downsample-count=100", "--downsample-mode=total", "in.bam",
+            "out.bam",
+        });
+        CHECK(result.error.empty());
+        CHECK(!result.options.downsample.fraction.has_value());
+        CHECK(result.options.downsample.count.has_value());
+        CHECK_EQ(*result.options.downsample.count, std::int64_t{100});
+        CHECK(result.options.downsample.mode == husk::DownsampleMode::Total);
+    }
+    {
+        const auto result = parse({
+            "--downsample-fraction", "0.5", "--downsample-mode", "sample-wise",
+            "in.bam", "out.bam",
+        });
+        CHECK(result.error.empty());
+        CHECK(result.options.downsample.mode == husk::DownsampleMode::Sample);
+    }
+    {
+        const auto result = parse({
+            "--downsample-count", "1", "in.bam", "out.bam",
+        });
+        CHECK(result.error.empty());
+        CHECK(result.options.downsample.mode == husk::DownsampleMode::Total);
+        CHECK(!result.options.downsample_mode_set);
+        CHECK(!result.options.downsample_seed_set);
+    }
+    {
+        const auto result = parse({
+            "--downsample-fraction=1", "in.bam", "out.bam",
+        });
+        CHECK(result.error.empty());
+        CHECK(result.options.downsample.fraction.has_value());
+        CHECK_EQ(*result.options.downsample.fraction, 1.0);
+    }
+
     CHECK(!parse({"--threads", "0", "in.bam", "out.bam"}).error.empty());
     CHECK(!parse({"--threads", "-1", "in.bam", "out.bam"}).error.empty());
     CHECK(!parse({"--compression", "10", "in.bam", "out.bam"}).error.empty());
@@ -104,6 +156,46 @@ void test_cli() {
     CHECK(!parse({"in.bam", "out.bam", "extra"}).error.empty());
     CHECK(!parse({"--drop-seq", "--keep-qual", "in.bam", "out.bam"})
                .error.empty());
+    CHECK(!parse({
+              "--downsample-fraction", "0.5", "--downsample-count", "10",
+              "in.bam", "out.bam",
+          })
+               .error.empty());
+    CHECK(!parse({"--downsample-fraction", "0", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--downsample-fraction", "-0.1", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--downsample-fraction", "1.1", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--downsample-fraction", "nan", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--downsample-fraction", "x", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--downsample-count", "0", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--downsample-count", "-1", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({
+              "--downsample-count", "9223372036854775808", "in.bam",
+              "out.bam",
+          })
+               .error.empty());
+    CHECK(!parse({"--downsample-count", "x", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--downsample-seed", "-1", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--downsample-seed", "x", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--downsample-mode", "sample", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--downsample-seed", "0", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--downsample-mode", "bogus", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--downsample-mode", "in.bam", "out.bam"}).error.empty());
+    CHECK(!parse({"--downsample-fraction", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--downsample-count", "in.bam", "out.bam"}).error.empty());
 
     {
         const auto result = parse({"--", "--in.bam", "--out.bam"});

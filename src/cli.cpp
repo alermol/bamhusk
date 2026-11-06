@@ -10,7 +10,8 @@
 namespace husk {
 namespace {
 
-bool parse_int(std::string_view text, int &value) {
+template <typename T>
+bool parse_number(std::string_view text, T &value) {
     if (text.empty()) {
         return false;
     }
@@ -18,6 +19,22 @@ bool parse_int(std::string_view text, int &value) {
     const char *end = begin + text.size();
     const auto result = std::from_chars(begin, end, value);
     return result.ec == std::errc{} && result.ptr == end;
+}
+
+bool parse_int(std::string_view text, int &value) {
+    return parse_number(text, value);
+}
+
+bool parse_int64(std::string_view text, std::int64_t &value) {
+    return parse_number(text, value);
+}
+
+bool parse_uint64(std::string_view text, std::uint64_t &value) {
+    return parse_number(text, value);
+}
+
+bool parse_double(std::string_view text, double &value) {
+    return parse_number(text, value);
 }
 
 ParseResult fail(std::string message) {
@@ -90,7 +107,12 @@ ParseResult parse_long_option(
 
     const bool is_threads = name == "--threads";
     const bool is_compression = name == "--compression";
-    if (!is_threads && !is_compression) {
+    const bool is_downsample_fraction = name == "--downsample-fraction";
+    const bool is_downsample_count = name == "--downsample-count";
+    const bool is_downsample_mode = name == "--downsample-mode";
+    const bool is_downsample_seed = name == "--downsample-seed";
+    if (!is_threads && !is_compression && !is_downsample_fraction &&
+        !is_downsample_count && !is_downsample_mode && !is_downsample_seed) {
         return fail("unrecognized option '" + name + "'");
     }
 
@@ -105,10 +127,81 @@ ParseResult parse_long_option(
         return fail("option '" + name + "' requires a value");
     }
 
+    if (is_downsample_mode) {
+        if (option_value == "total") {
+            options.downsample.mode = DownsampleMode::Total;
+        } else if (
+            option_value == "sample" || option_value == "sample-wise" ||
+            option_value == "samplewise"
+        ) {
+            options.downsample.mode = DownsampleMode::Sample;
+        } else {
+            return fail(
+                "--downsample-mode must be 'sample' or 'total', got '" +
+                option_value + "'"
+            );
+        }
+        options.downsample_mode_set = true;
+        ParseResult result;
+        result.options = options;
+        return result;
+    }
+
+    if (is_downsample_fraction) {
+        double parsed = 0.0;
+        if (!parse_double(option_value, parsed)) {
+            return fail(
+                "option '" + name + "' expects a number, got '" +
+                option_value + "'"
+            );
+        }
+        if (!(parsed > 0.0 && parsed <= 1.0)) {
+            return fail("--downsample-fraction must be greater than 0 and at most 1");
+        }
+        options.downsample.fraction = parsed;
+        ParseResult result;
+        result.options = options;
+        return result;
+    }
+
+    if (is_downsample_count) {
+        std::int64_t parsed = 0;
+        if (!parse_int64(option_value, parsed)) {
+            return fail(
+                "option '" + name + "' expects an integer, got '" +
+                option_value + "'"
+            );
+        }
+        if (parsed < 1) {
+            return fail("--downsample-count must be at least 1");
+        }
+        options.downsample.count = parsed;
+        ParseResult result;
+        result.options = options;
+        return result;
+    }
+
+    if (is_downsample_seed) {
+        std::uint64_t parsed = 0;
+        if (!parse_uint64(option_value, parsed)) {
+            return fail(
+                "option '" + name + "' expects a non-negative integer, got '" +
+                option_value + "'"
+            );
+        }
+        options.downsample.seed = parsed;
+        options.downsample_seed_set = true;
+        ParseResult result;
+        result.options = options;
+        return result;
+    }
+
     int parsed = 0;
     if (!parse_int(option_value, parsed)) {
-        return fail("option '" + name + "' expects an integer, got '" +
-                    option_value + "'");
+        return fail(
+            "option '" + name + "' expects an integer, got '" + option_value +
+            "'"
+        );
     }
     if (is_threads) {
         if (parsed < 1) {
@@ -194,6 +287,24 @@ ParseResult parse_args(const std::vector<std::string> &args) {
     if (options.drop_seq && options.keep_qual) {
         return fail("--keep-qual requires SEQ; drop --drop-seq");
     }
+    if (options.downsample.fraction.has_value() &&
+        options.downsample.count.has_value()) {
+        return fail(
+            "use only one of --downsample-fraction and --downsample-count"
+        );
+    }
+    if (!options.downsample.enabled() && options.downsample_mode_set) {
+        return fail(
+            "--downsample-mode requires --downsample-fraction or "
+            "--downsample-count"
+        );
+    }
+    if (!options.downsample.enabled() && options.downsample_seed_set) {
+        return fail(
+            "--downsample-seed requires --downsample-fraction or "
+            "--downsample-count"
+        );
+    }
 
     options.input = positional[0];
     options.output = positional[1];
@@ -225,6 +336,14 @@ void print_usage(std::FILE *out) {
         "  -@, --threads N     htslib I/O threads (default: min(4, cores))\n"
         "  --index             Write out.bam.csi with min_shift=14\n"
         "  --compression N     BGZF compression level 0-9 (default 6)\n"
+        "  --downsample-fraction F\n"
+        "                      Keep a random fraction F of reads (0 < F <= 1)\n"
+        "  --downsample-count N\n"
+        "                      Keep N random reads per downsampling group\n"
+        "  --downsample-mode MODE\n"
+        "                      sample or total (default: total)\n"
+        "  --downsample-seed N\n"
+        "                      Random seed (default: 0)\n"
         "  --force             Overwrite an existing output\n"
         "  --verify            Reopen and validate the output after writing\n"
         "  --version           Print version and git SHA\n"
@@ -232,6 +351,8 @@ void print_usage(std::FILE *out) {
         "\n"
         "By default QUAL, read names and all optional tags except RG are\n"
         "removed; SEQ is kept. @PG and @CO header lines are always removed.\n"
+        "Downsampling is record-level. In sample mode each @RG SM value is a\n"
+        "group; reads without a known sample form one unknown group.\n"
     );
 }
 

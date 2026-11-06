@@ -1,5 +1,7 @@
 #pragma once
 
+#include "downsample.hpp"
+
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -23,10 +25,12 @@ struct SlimOptions {
     bool verify = false;
     int threads = 1;
     int compression = 6;
+    DownsampleOptions downsample;
 };
 
 struct SlimStats {
     std::int64_t reads = 0;
+    std::int64_t input_reads = 0;
     std::int64_t input_bytes = -1;
     std::int64_t output_bytes = -1;
 };

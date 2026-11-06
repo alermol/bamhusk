@@ -6,13 +6,19 @@
 #include <htslib/hts.h>
 #include <htslib/sam.h>
 
+#include <algorithm>
 #include <cerrno>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <memory>
+#include <random>
 #include <string>
 #include <system_error>
+#include <unordered_map>
+#include <vector>
 
 namespace husk {
 namespace {
@@ -135,6 +141,147 @@ bool check_coordinate_order(
     last_tid = tid;
     last_position = position;
     return true;
+}
+
+struct SampleGroups {
+    std::unordered_map<std::string, int> by_read_group;
+    int unknown = 0;
+    int count = 1;
+};
+
+SampleGroups make_sample_groups(const sam_hdr_t *header) {
+    SampleGroups groups;
+    const auto rg_samples = read_group_samples(header);
+    std::unordered_map<std::string, int> sample_groups;
+    int next_group = 1;
+    for (const auto &[read_group, sample] : rg_samples) {
+        auto found = sample_groups.find(sample);
+        if (found == sample_groups.end()) {
+            found = sample_groups.emplace(sample, next_group++).first;
+        }
+        groups.by_read_group.emplace(read_group, found->second);
+    }
+    groups.count = next_group;
+    return groups;
+}
+
+int group_for_record(
+    const bam1_t *record,
+    bool per_sample,
+    const SampleGroups &groups,
+    std::string &read_group
+) {
+    if (!per_sample) {
+        return 0;
+    }
+
+    const std::uint8_t *rg = bam_aux_get(record, "RG");
+    if (rg == nullptr) {
+        return groups.unknown;
+    }
+
+    const std::uint8_t *data_end = record->data + record->l_data;
+    if (rg < record->data || rg >= data_end || rg[0] != 'Z') {
+        return groups.unknown;
+    }
+    const std::uint8_t *value = rg + 1;
+    if (value >= data_end ||
+        std::memchr(value, 0, static_cast<std::size_t>(data_end - value)) ==
+            nullptr) {
+        return groups.unknown;
+    }
+
+    read_group.assign(reinterpret_cast<const char *>(value));
+    const auto found = groups.by_read_group.find(read_group);
+    if (found == groups.by_read_group.end()) {
+        return groups.unknown;
+    }
+    return found->second;
+}
+
+bool count_reads_per_group(
+    const std::filesystem::path &path,
+    const SampleGroups &groups,
+    bool per_sample,
+    int threads,
+    std::vector<std::int64_t> &counts,
+    std::string &error
+) {
+    SamFilePtr file(sam_open(path.string().c_str(), "r"));
+    if (!file) {
+        error = "cannot reopen '" + path.string() + "'";
+        return false;
+    }
+    if (threads > 1 && hts_set_threads(file.get(), threads) != 0) {
+        error = "cannot set input threads";
+        return false;
+    }
+
+    HeaderPtr header(sam_hdr_read(file.get()));
+    if (!header) {
+        error = "cannot read the header of '" + path.string() + "'";
+        return false;
+    }
+
+    BamPtr record(bam_init1());
+    if (!record) {
+        error = "cannot allocate a BAM record";
+        return false;
+    }
+
+    counts.assign(static_cast<std::size_t>(groups.count), 0);
+    std::string read_group;
+    while (true) {
+        if (interrupted()) {
+            error = "interrupted";
+            return false;
+        }
+
+        const int status = sam_read1(file.get(), header.get(), record.get());
+        if (status == -1) {
+            break;
+        }
+        if (status < -1) {
+            error = "error reading '" + path.string() + "'";
+            return false;
+        }
+
+        const int group =
+            group_for_record(record.get(), per_sample, groups, read_group);
+        if (group < 0 || static_cast<std::size_t>(group) >= counts.size()) {
+            error = "internal sample grouping error";
+            return false;
+        }
+        ++counts[static_cast<std::size_t>(group)];
+    }
+    return true;
+}
+
+std::uint64_t random_below(std::mt19937_64 &rng, std::uint64_t bound) {
+    // Rejection sampling avoids the modulo bias that a plain rng() % bound
+    // would introduce. bound must be greater than zero.
+    const std::uint64_t threshold = (std::uint64_t{0} - bound) % bound;
+    std::uint64_t value = rng();
+    while (value < threshold) {
+        value = rng();
+    }
+    return value % bound;
+}
+
+std::int64_t target_for_group(
+    const DownsampleOptions &options,
+    std::int64_t group_count
+) {
+    if (options.fraction.has_value()) {
+        const auto target = static_cast<std::int64_t>(
+            std::llround(*options.fraction * static_cast<double>(group_count))
+        );
+        return std::min(group_count, std::max<std::int64_t>(target, 0));
+    }
+    if (options.count.has_value()) {
+        return std::min(*options.count, group_count);
+    }
+    return group_count;
 }
 
 }  // namespace
@@ -265,6 +412,25 @@ int write_slim_bam(
         report("--keep-qual requires SEQ; drop --drop-seq");
         return 2;
     }
+    if (options.downsample.fraction.has_value() &&
+        options.downsample.count.has_value()) {
+        report(
+            "use only one of --downsample-fraction and --downsample-count"
+        );
+        return 2;
+    }
+    if (options.downsample.fraction.has_value()) {
+        const double fraction = *options.downsample.fraction;
+        if (!(fraction > 0.0 && fraction <= 1.0)) {
+            report("--downsample-fraction must be greater than 0 and at most 1");
+            return 2;
+        }
+    }
+    if (options.downsample.count.has_value() &&
+        *options.downsample.count < 1) {
+        report("--downsample-count must be at least 1");
+        return 2;
+    }
     if (same_file(output.input, output.output)) {
         report("input and output are the same file");
         return 2;
@@ -356,6 +522,38 @@ int write_slim_bam(
         return 1;
     }
 
+    const bool downsampling = options.downsample.enabled();
+    const bool per_sample =
+        options.downsample.mode == DownsampleMode::Sample;
+    SampleGroups sample_groups;
+    std::vector<std::int64_t> remaining;
+    std::vector<std::int64_t> needed;
+    std::int64_t input_reads = 0;
+    std::mt19937_64 rng(options.downsample.seed);
+    if (downsampling) {
+        if (per_sample) {
+            sample_groups = make_sample_groups(header.get());
+        }
+        std::string count_error;
+        if (!count_reads_per_group(
+                output.input,
+                sample_groups,
+                per_sample,
+                options.threads,
+                remaining,
+                count_error
+            )) {
+            report(count_error);
+            return 1;
+        }
+        needed.resize(remaining.size());
+        for (std::size_t index = 0; index < remaining.size(); ++index) {
+            needed[index] =
+                target_for_group(options.downsample, remaining[index]);
+            input_reads += remaining[index];
+        }
+    }
+
     TempFiles temporary;
     temporary.bam = temporary_path_for(output.output);
     if (temporary.bam.empty()) {
@@ -402,6 +600,7 @@ int write_slim_bam(
     std::int64_t reads = 0;
     std::int32_t last_tid = -2;
     std::int64_t last_position = -1;
+    std::string read_group;
     while (true) {
         if (interrupted()) {
             report("interrupted");
@@ -425,11 +624,51 @@ int write_slim_bam(
             report(error);
             return 1;
         }
+
+        bool keep = true;
+        if (downsampling) {
+            const int group = group_for_record(
+                record.get(), per_sample, sample_groups, read_group
+            );
+            if (group < 0 ||
+                static_cast<std::size_t>(group) >= remaining.size()) {
+                report("internal sample grouping error");
+                return 1;
+            }
+            auto &left = remaining[static_cast<std::size_t>(group)];
+            auto &want = needed[static_cast<std::size_t>(group)];
+            if (left <= 0 || want > left) {
+                report("input changed while downsampling");
+                return 1;
+            }
+
+            // Sequential sampling without replacement: keep the current
+            // record with probability want / left. This selects exactly
+            // `want` records from the remaining `left` uniformly.
+            keep = false;
+            if (want > 0) {
+                if (left <= want) {
+                    keep = true;
+                } else {
+                    keep =
+                        random_below(rng, static_cast<std::uint64_t>(left)) <
+                        static_cast<std::uint64_t>(want);
+                }
+                if (keep) {
+                    --want;
+                }
+            }
+            --left;
+        }
+
         if (!transform_record(
                 record.get(), slim_record.get(), policy, error
             )) {
             report(error);
             return 1;
+        }
+        if (!keep) {
+            continue;
         }
         if (sam_write1(
                 destination.get(), slim_header.get(), slim_record.get()
@@ -438,6 +677,15 @@ int write_slim_bam(
             return 1;
         }
         ++reads;
+    }
+
+    if (downsampling) {
+        for (std::size_t index = 0; index < remaining.size(); ++index) {
+            if (remaining[index] != 0 || needed[index] != 0) {
+                report("input changed while downsampling");
+                return 1;
+            }
+        }
     }
 
     samFile *raw_destination = destination.release();
@@ -540,6 +788,7 @@ int write_slim_bam(
 
     if (stats != nullptr) {
         stats->reads = reads;
+        stats->input_reads = downsampling ? input_reads : reads;
         stats->input_bytes = ::husk::file_size(output.input);
         stats->output_bytes = ::husk::file_size(output.output);
     }

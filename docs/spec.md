@@ -15,7 +15,7 @@ application never receives or executes the binary.
 ### Goals
 
 - Preserve every alignment record and every field the downstream analysis
-  reads.
+  reads, unless optional random downsampling is requested.
 - Remove data that the downstream analysis does not read.
 - Produce output that passes `samtools quickcheck`.
 - Ship reproducible binaries for Linux, macOS, and Windows.
@@ -23,7 +23,8 @@ application never receives or executes the binary.
 
 ### Non-goals
 
-- Read filtering, trimming, duplicate removal, or realignment.
+- Read filtering other than optional random downsampling, trimming, duplicate
+  removal, or realignment.
 - CRAM support in v0.1.
 - Server-side execution of user-uploaded binaries.
 - Preserving base qualities or read names by default.
@@ -31,12 +32,24 @@ application never receives or executes the binary.
 
 ## 3. Definitions
 
-**Slimming** rewrites a BAM with the same records in the same order, but with
-only the header lines and record fields listed in sections 6 and 7.
+**Slimming** rewrites a BAM with only the header lines and record fields
+listed in sections 6 and 7. Without downsampling, it keeps the same records in
+the same order; with downsampling, it keeps the selected records in input
+order.
 
 **Kept fields** are the BAM core fields `FLAG`, `RNAME`, `POS`, `MAPQ`,
 `CIGAR`, `RNEXT`, `PNEXT`, and `TLEN`, plus the optional `RG:Z` tag. Their
 values are copied unchanged.
+
+**A downsampling group** is the unit to which a downsampling target applies.
+In `total` mode the whole input is one group. In `sample` mode each distinct
+non-empty `SM` value declared by an `@RG` header line is a group. Records
+whose `RG:Z` tag is absent, names an unknown read group, or names a read group
+without `SM` share one unknown group.
+
+**A downsampling target** is the number of records kept from a group:
+`round(F × group size)` for a fraction `F`, or `min(N, group size)` for a
+count `N`.
 
 ## 4. CLI contract
 
@@ -51,6 +64,14 @@ Options:
   -@, --threads N     htslib I/O threads (default: min(4, cores))
   --index             Write out.bam.csi with min_shift=14
   --compression N     BGZF compression level 0-9 (default 6)
+  --downsample-fraction F
+                      Keep a random fraction F of reads (0 < F <= 1)
+  --downsample-count N
+                      Keep N random reads per downsampling group
+  --downsample-mode MODE
+                      sample or total (default: total)
+  --downsample-seed N
+                      Random seed (default: 0)
   --force             Overwrite an existing output
   --verify            Reopen and validate the output after writing
   --version           Print version and git SHA
@@ -69,8 +90,8 @@ both `--option value` and `--option=value`.
 | 2 | Usage error |
 | 3 | Verification failure |
 
-On success, Husk writes a one-line read and byte summary to stderr. Standard
-output is used only by `--help` and `--version`.
+On success, Husk writes a one-line output read and byte summary to stderr.
+Standard output is used only by `--help` and `--version`.
 
 ### Defaults
 
@@ -86,6 +107,12 @@ output is used only by `--help` and `--version`.
 - `--drop-rg` is only valid when the header can be shown to describe a single
   sample. Husk refuses when the header declares more than one distinct `SM`
   value; a read group without a non-empty `SM` counts as an unknown sample.
+- Downsampling is disabled unless `--downsample-fraction` or
+  `--downsample-count` is given. At most one of the two may be given; the
+  fraction must be greater than 0 and at most 1, and the count must be at
+  least 1.
+- `--downsample-mode` and `--downsample-seed` require a downsampling amount.
+  The mode defaults to `total`; the seed defaults to `0`.
 - An input path that is also the output `.csi` path is a usage error.
 
 A failed run leaves any pre-existing BAM and adjacent index untouched. The
@@ -119,7 +146,9 @@ If no `@SQ` line is present, exit 1.
 
 ## 7. Record policy
 
-Every input record produces exactly one output record, in input order.
+Without downsampling, every input record produces exactly one output record,
+in input order. With downsampling, each selected input record produces exactly
+one output record, in input order.
 
 | Field | Default | `--keep-name` | `--keep-qual` | `--drop-seq` | `--drop-rg` |
 |---|---|---|---|---|---|
@@ -144,20 +173,42 @@ A CIGAR longer than 65535 operations is stored by htslib as a two-operation
 placeholder plus a `CG:B:I` tag. Husk preserves that tag when required so the
 real CIGAR survives.
 
+### 7.1 Downsampling
+
+Downsampling is record-level: each record is selected or rejected
+independently of its mate. The output preserves the input order.
+
+Husk counts records per downsampling group in a first pass, computes each
+group's target, then makes a second pass and keeps exactly the target number
+of records from each group using uniform sampling without replacement. If a
+target is greater than or equal to a group's size, the whole group is kept.
+Fraction targets are rounded to the nearest integer.
+
+In `sample` mode the group is determined from the record's `RG:Z` tag and the
+`@RG` header lines. Read groups with the same non-empty `SM` value form one
+sample. Records without a usable sample share one unknown group, which is
+downsampled independently of the known samples. Grouping uses the input `RG`
+tag even when `--drop-rg` is given.
+
+A fixed seed (default `0`) reproduces the selection for the same input and
+options. The header policy is unchanged; the output header is the same
+`@HD`/`@SQ`/`@RG` subset that a run without downsampling writes.
+
 ## 8. Validation
 
 A successful run guarantees:
 
 - `samtools quickcheck` passes.
-- The read count matches the input.
-- Every kept core field matches the input record-by-record.
+- Without downsampling, the read count matches the input. With downsampling,
+  the read count matches the sum of the computed group targets.
+- Every output core field matches its input record.
 - `RG:Z` matches the input when retained.
 - The header contains only `@HD`, `@SQ`, and `@RG`.
 - The output is a valid BAM with a readable header and decodable records.
 
 With `--verify`, Husk reopens the output, decodes the header and every record,
-rechecks the read count, and validates the index when `--index` was used. A
-verification failure exits 3.
+rechecks the expected output read count, and validates the index when
+`--index` was used. A verification failure exits 3.
 
 ## 9. Release contract
 
@@ -220,7 +271,10 @@ The consuming application:
 v0.1.0 is accepted when:
 
 - All validation rules in section 8 hold on synthetic and real BAMs.
-- Downstream window-metric counts are identical before and after slimming.
+- Downstream window-metric counts are identical before and after slimming
+  without downsampling.
+- Total and sample downsampling produce the expected group targets, and a
+  fixed seed reproduces the selected records.
 - The build matrix produces every asset in section 9.
 - Every binary asset has a matching checksum and manifest entry; the source
   tarball has a matching checksum in `SHA256SUMS`.

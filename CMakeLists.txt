@@ -65,6 +65,7 @@ add_library(
     husk_lib
     STATIC
     src/cli.cpp
+    src/downsample.hpp
     src/header.cpp
     src/bam_slim.cpp
     src/platform.cpp

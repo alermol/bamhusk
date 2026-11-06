@@ -20,6 +20,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t *data, std::size_t size
 
     sam_hdr_t *header = sam_hdr_parse(slim.size(), slim.c_str());
     if (header != nullptr) {
+        (void)husk::read_group_samples(header);
         sam_hdr_destroy(header);
     }
     return 0;

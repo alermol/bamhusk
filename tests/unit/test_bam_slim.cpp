@@ -21,6 +21,104 @@ const std::vector<std::string> kRecords = {
     "r2\t0\tchr1\t10\t60\t4M\t*\t0\t0\tACGT\tIIII\tRG:Z:s1\tNM:i:1",
 };
 
+const std::string kDownsampleHeader =
+    "@HD\tVN:1.6\tSO:coordinate\n"
+    "@SQ\tSN:chr1\tLN:1000\n"
+    "@RG\tID:a\tSM:alpha\n"
+    "@RG\tID:a2\tSM:alpha\n"
+    "@RG\tID:b\tSM:beta\n"
+    "@RG\tID:c\n";
+
+std::vector<std::string> downsample_records() {
+    std::vector<std::string> records;
+    records.reserve(20);
+    for (int index = 0; index < 20; ++index) {
+        std::string name;
+        std::string tag;
+        if (index < 10) {
+            name = "alpha" + std::to_string(index);
+            tag = index % 2 == 0 ? "RG:Z:a" : "RG:Z:a2";
+        } else if (index < 16) {
+            name = "beta" + std::to_string(index - 10);
+            tag = "RG:Z:b";
+        } else {
+            name = "unknown" + std::to_string(index - 16);
+            if (index == 16) {
+                tag = "RG:Z:missing";
+            } else if (index == 17) {
+                tag = "RG:Z:c";
+            }
+        }
+        std::string line = name + "\t0\tchr1\t" +
+                           std::to_string(index + 1) +
+                           "\t60\t4M\t*\t0\t0\tACGT\tIIII";
+        if (!tag.empty()) {
+            line += "\t";
+            line += tag;
+        }
+        records.push_back(std::move(line));
+    }
+    return records;
+}
+
+std::vector<std::string> read_names(const std::filesystem::path &path) {
+    husk_test::SamFilePtr input(sam_open(path.string().c_str(), "r"));
+    if (!input) {
+        throw std::runtime_error("cannot open BAM");
+    }
+    husk::HeaderPtr header(sam_hdr_read(input.get()));
+    if (!header) {
+        throw std::runtime_error("cannot read header");
+    }
+    husk_test::BamPtr record(bam_init1());
+    if (!record) {
+        throw std::runtime_error("cannot allocate a BAM record");
+    }
+
+    std::vector<std::string> names;
+    while (true) {
+        const int status = sam_read1(input.get(), header.get(), record.get());
+        if (status == -1) {
+            break;
+        }
+        if (status < -1) {
+            throw std::runtime_error("cannot read record");
+        }
+        names.emplace_back(bam_get_qname(record.get()));
+    }
+    return names;
+}
+
+std::size_t count_prefix(
+    const std::vector<std::string> &names,
+    const std::string &prefix
+) {
+    std::size_t count = 0;
+    for (const std::string &name : names) {
+        if (name.rfind(prefix, 0) == 0) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+bool is_subsequence(
+    const std::vector<std::string> &subset,
+    const std::vector<std::string> &superset
+) {
+    std::size_t next = 0;
+    for (const std::string &name : subset) {
+        while (next < superset.size() && superset[next] != name) {
+            ++next;
+        }
+        if (next == superset.size()) {
+            return false;
+        }
+        ++next;
+    }
+    return true;
+}
+
 husk_test::BamPtr read_first_record(const std::filesystem::path &path) {
     husk_test::SamFilePtr input(sam_open(path.string().c_str(), "r"));
     if (!input) {
@@ -501,5 +599,222 @@ void test_bam_slim() {
             CHECK(std::filesystem::exists(output));
             CHECK(std::filesystem::exists(output.string() + ".csi"));
         }
+    }
+
+    const auto downsample_input = directory.path / "downsample.bam";
+    husk_test::write_bam(
+        downsample_input, kDownsampleHeader, downsample_records()
+    );
+    const auto downsample_names = read_names(downsample_input);
+    CHECK_EQ(downsample_names.size(), std::size_t{20});
+
+    {
+        const auto output = directory.path / "downsample-total-count.bam";
+        husk::SlimOptions options;
+        options.keep_name = true;
+        options.downsample.count = 6;
+        husk::SlimStats stats;
+        CHECK_EQ(
+            husk::write_slim_bam(
+                output_for(downsample_input, output), options, &stats
+            ),
+            0
+        );
+        CHECK_EQ(stats.reads, 6);
+        CHECK_EQ(stats.input_reads, 20);
+        const auto names = read_names(output);
+        CHECK_EQ(names.size(), std::size_t{6});
+        CHECK(is_subsequence(names, downsample_names));
+    }
+
+    {
+        const auto output = directory.path / "downsample-sample-count.bam";
+        husk::SlimOptions options;
+        options.keep_name = true;
+        options.downsample.count = 3;
+        options.downsample.mode = husk::DownsampleMode::Sample;
+        husk::SlimStats stats;
+        CHECK_EQ(
+            husk::write_slim_bam(
+                output_for(downsample_input, output), options, &stats
+            ),
+            0
+        );
+        CHECK_EQ(stats.reads, 9);
+        CHECK_EQ(stats.input_reads, 20);
+        const auto names = read_names(output);
+        CHECK_EQ(count_prefix(names, "alpha"), std::size_t{3});
+        CHECK_EQ(count_prefix(names, "beta"), std::size_t{3});
+        CHECK_EQ(count_prefix(names, "unknown"), std::size_t{3});
+        CHECK(is_subsequence(names, downsample_names));
+    }
+
+    {
+        const auto output = directory.path / "downsample-total-fraction.bam";
+        husk::SlimOptions options;
+        options.keep_name = true;
+        options.downsample.fraction = 0.25;
+        husk::SlimStats stats;
+        CHECK_EQ(
+            husk::write_slim_bam(
+                output_for(downsample_input, output), options, &stats
+            ),
+            0
+        );
+        CHECK_EQ(stats.reads, 5);
+        CHECK_EQ(stats.input_reads, 20);
+        CHECK_EQ(read_names(output).size(), std::size_t{5});
+    }
+
+    {
+        const auto output = directory.path / "downsample-sample-fraction.bam";
+        husk::SlimOptions options;
+        options.keep_name = true;
+        options.downsample.fraction = 0.5;
+        options.downsample.mode = husk::DownsampleMode::Sample;
+        husk::SlimStats stats;
+        CHECK_EQ(
+            husk::write_slim_bam(
+                output_for(downsample_input, output), options, &stats
+            ),
+            0
+        );
+        CHECK_EQ(stats.reads, 10);
+        const auto names = read_names(output);
+        CHECK_EQ(count_prefix(names, "alpha"), std::size_t{5});
+        CHECK_EQ(count_prefix(names, "beta"), std::size_t{3});
+        CHECK_EQ(count_prefix(names, "unknown"), std::size_t{2});
+    }
+
+    {
+        const auto output = directory.path / "downsample-all.bam";
+        husk::SlimOptions options;
+        options.keep_name = true;
+        options.downsample.count = 100;
+        husk::SlimStats stats;
+        CHECK_EQ(
+            husk::write_slim_bam(
+                output_for(downsample_input, output), options, &stats
+            ),
+            0
+        );
+        CHECK_EQ(stats.reads, 20);
+        CHECK_EQ(stats.input_reads, 20);
+        CHECK_EQ(read_names(output).size(), std::size_t{20});
+    }
+
+    {
+        const auto output = directory.path / "downsample-all-fraction.bam";
+        husk::SlimOptions options;
+        options.keep_name = true;
+        options.downsample.fraction = 1.0;
+        husk::SlimStats stats;
+        CHECK_EQ(
+            husk::write_slim_bam(
+                output_for(downsample_input, output), options, &stats
+            ),
+            0
+        );
+        CHECK_EQ(stats.reads, 20);
+        CHECK_EQ(stats.input_reads, 20);
+        CHECK_EQ(read_names(output).size(), std::size_t{20});
+    }
+
+    {
+        const auto output1 = directory.path / "downsample-seed-1.bam";
+        const auto output2 = directory.path / "downsample-seed-2.bam";
+        husk::SlimOptions options;
+        options.keep_name = true;
+        options.downsample.count = 5;
+        options.downsample.seed = 4242;
+        CHECK_EQ(
+            husk::write_slim_bam(
+                output_for(downsample_input, output1), options, nullptr
+            ),
+            0
+        );
+        CHECK_EQ(
+            husk::write_slim_bam(
+                output_for(downsample_input, output2), options, nullptr
+            ),
+            0
+        );
+        CHECK(read_names(output1) == read_names(output2));
+    }
+
+    {
+        const auto output = directory.path / "downsample-verify.bam";
+        husk::SlimOptions options;
+        options.downsample.count = 7;
+        options.verify = true;
+        husk::SlimStats stats;
+        CHECK_EQ(
+            husk::write_slim_bam(
+                output_for(downsample_input, output), options, &stats
+            ),
+            0
+        );
+        CHECK_EQ(stats.reads, 7);
+    }
+
+    {
+        const auto empty_input = directory.path / "downsample-empty.bam";
+        husk_test::write_bam(empty_input, kDownsampleHeader, {});
+        const auto output = directory.path / "downsample-empty-out.bam";
+        husk::SlimOptions options;
+        options.downsample.count = 1;
+        options.verify = true;
+        husk::SlimStats stats;
+        CHECK_EQ(
+            husk::write_slim_bam(
+                output_for(empty_input, output), options, &stats
+            ),
+            0
+        );
+        CHECK_EQ(stats.reads, 0);
+        CHECK_EQ(stats.input_reads, 0);
+    }
+
+    {
+        const auto output = directory.path / "downsample-drop-rg.bam";
+        husk::SlimOptions options;
+        options.drop_rg = true;
+        options.downsample.count = 1;
+        options.downsample.mode = husk::DownsampleMode::Sample;
+        husk::SlimStats stats;
+        CHECK_EQ(
+            husk::write_slim_bam(output_for(input, output), options, &stats),
+            0
+        );
+        CHECK_EQ(stats.reads, 1);
+        husk_test::BamPtr record = read_first_record(output);
+        CHECK(bam_aux_get(record.get(), "RG") == nullptr);
+    }
+
+    {
+        const auto no_rg_input = directory.path / "downsample-no-rg.bam";
+        husk_test::write_bam(
+            no_rg_input,
+            "@HD\tVN:1.6\tSO:coordinate\n"
+            "@SQ\tSN:chr1\tLN:1000\n",
+            {
+                "r1\t0\tchr1\t1\t60\t4M\t*\t0\t0\tACGT\tIIII",
+                "r2\t0\tchr1\t2\t60\t4M\t*\t0\t0\tACGT\tIIII",
+            }
+        );
+        const auto output = directory.path / "downsample-no-rg-out.bam";
+        husk::SlimOptions options;
+        options.keep_name = true;
+        options.downsample.count = 1;
+        options.downsample.mode = husk::DownsampleMode::Sample;
+        husk::SlimStats stats;
+        CHECK_EQ(
+            husk::write_slim_bam(
+                output_for(no_rg_input, output), options, &stats
+            ),
+            0
+        );
+        CHECK_EQ(stats.reads, 1);
+        CHECK_EQ(stats.input_reads, 2);
     }
 }

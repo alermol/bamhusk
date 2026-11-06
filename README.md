@@ -24,6 +24,8 @@ server-side size limit. The application never receives or executes the binary.
   cleans up on failure or `SIGINT`.
 - Optional CSI index, output verification, BGZF compression control, and
   htslib I/O threads.
+- Optional reproducible random downsampling by fraction or read count, either
+  across the whole file or per sample.
 - Rejects SAM/CRAM input, malformed `RG` tags, and unsorted records.
 
 ## Build
@@ -54,6 +56,14 @@ Options:
   -@, --threads N     htslib I/O threads (default: min(4, cores))
   --index             Write out.bam.csi with min_shift=14
   --compression N     BGZF compression level 0-9 (default 6)
+  --downsample-fraction F
+                      Keep a random fraction F of reads (0 < F <= 1)
+  --downsample-count N
+                      Keep N random reads per downsampling group
+  --downsample-mode MODE
+                      sample or total (default: total)
+  --downsample-seed N
+                      Random seed (default: 0)
   --force             Overwrite an existing output
   --verify            Reopen and validate the output after writing
   --version           Print version and git SHA
@@ -62,6 +72,13 @@ Options:
 
 Exit codes: `0` success, `1` runtime/I/O/validation error, `2` usage error,
 `3` verification failure.
+
+`--downsample-mode sample` groups records by the `SM` value of their `RG:Z`
+read group. Multiple read groups with the same `SM` form one sample; reads
+without a known sample share one unknown group. Sampling is record-level and
+does not keep mates together. The target is applied exactly per group, and
+`--downsample-seed` makes the selection reproducible. Downsampling reads the
+input twice: once to count each group and once to write the selected records.
 
 The full contract, including the release manifest, is in
 [`docs/spec.md`](docs/spec.md).

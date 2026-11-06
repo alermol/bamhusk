@@ -1,5 +1,7 @@
 #pragma once
 
+#include "downsample.hpp"
+
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -22,6 +24,9 @@ struct Options {
     bool verify = false;
     int threads = default_threads();
     int compression = kDefaultCompression;
+    DownsampleOptions downsample;
+    bool downsample_mode_set = false;
+    bool downsample_seed_set = false;
     std::filesystem::path input;
     std::filesystem::path output;
 };

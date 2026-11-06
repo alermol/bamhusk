@@ -66,6 +66,7 @@ int main(int argc, char **argv) {
     slim.verify = options.verify;
     slim.threads = options.threads;
     slim.compression = options.compression;
+    slim.downsample = options.downsample;
 
     husk::SlimStats stats;
     const int result = husk::write_slim_bam(output, slim, &stats);
