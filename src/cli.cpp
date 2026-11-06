@@ -4,14 +4,18 @@
 
 #include <algorithm>
 #include <charconv>
+#include <locale>
+#include <sstream>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 
 namespace husk {
 namespace {
 
 template <typename T>
 bool parse_number(std::string_view text, T &value) {
+    static_assert(std::is_integral_v<T>);
     if (text.empty()) {
         return false;
     }
@@ -34,7 +38,14 @@ bool parse_uint64(std::string_view text, std::uint64_t &value) {
 }
 
 bool parse_double(std::string_view text, double &value) {
-    return parse_number(text, value);
+    if (text.empty()) {
+        return false;
+    }
+    // libc++ in Xcode 16 does not implement floating-point from_chars.
+    std::istringstream stream{std::string(text)};
+    stream.imbue(std::locale::classic());
+    stream >> std::noskipws >> value;
+    return stream && stream.eof();
 }
 
 ParseResult fail(std::string message) {
