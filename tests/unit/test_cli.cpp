@@ -1,6 +1,8 @@
 #include "cli.hpp"
 #include "test_harness.hpp"
 
+#include <htslib/sam.h>
+
 #include <string>
 #include <vector>
 
@@ -28,6 +30,12 @@ void test_cli() {
         CHECK(!result.options.index);
         CHECK(!result.options.force);
         CHECK(!result.options.verify);
+        CHECK_EQ(result.options.filter.require_flags, 0);
+        CHECK_EQ(result.options.filter.exclude_flags, 0);
+        CHECK_EQ(result.options.filter.min_mapq, 0);
+        CHECK_EQ(result.options.filter.min_read_length, std::int64_t{0});
+        CHECK(result.options.filter.expression.empty());
+        CHECK(!result.options.filter.enabled());
         CHECK(!result.options.downsample.enabled());
         CHECK(result.options.downsample.mode == husk::DownsampleMode::Total);
         CHECK_EQ(result.options.downsample.seed, std::uint64_t{0});
@@ -95,6 +103,46 @@ void test_cli() {
 
     {
         const auto result = parse({
+            "--require-flags", "UNMAP,SECONDARY", "--exclude-flags",
+            "0x400", "--min-mapq", "20", "--min-read-length", "50",
+            "--filter-expr", "mapq >= 20", "in.bam", "out.bam",
+        });
+        CHECK(result.error.empty());
+        CHECK_EQ(
+            result.options.filter.require_flags,
+            BAM_FUNMAP | BAM_FSECONDARY
+        );
+        CHECK_EQ(result.options.filter.exclude_flags, BAM_FDUP);
+        CHECK_EQ(result.options.filter.min_mapq, 20);
+        CHECK_EQ(result.options.filter.min_read_length, std::int64_t{50});
+        CHECK_EQ(
+            result.options.filter.expression,
+            std::string("mapq >= 20")
+        );
+        CHECK(result.options.filter.enabled());
+    }
+    {
+        const auto result = parse({
+            "--require-flags=0x4", "--exclude-flags=UNMAP,DUP", "in.bam",
+            "out.bam",
+        });
+        CHECK(result.error.empty());
+        CHECK_EQ(result.options.filter.require_flags, BAM_FUNMAP);
+        CHECK_EQ(
+            result.options.filter.exclude_flags, BAM_FUNMAP | BAM_FDUP
+        );
+    }
+    {
+        const auto result = parse({
+            "--min-mapq", "255", "--min-read-length", "0", "in.bam", "out.bam",
+        });
+        CHECK(result.error.empty());
+        CHECK_EQ(result.options.filter.min_mapq, 255);
+        CHECK_EQ(result.options.filter.min_read_length, std::int64_t{0});
+    }
+
+    {
+        const auto result = parse({
             "--downsample-fraction", "0.25", "--downsample-mode", "sample",
             "--downsample-seed", "123", "in.bam", "out.bam",
         });
@@ -148,6 +196,24 @@ void test_cli() {
     CHECK(!parse({"--compression", "-1", "in.bam", "out.bam"}).error.empty());
     CHECK(!parse({"--threads", "x", "in.bam", "out.bam"}).error.empty());
     CHECK(!parse({"--threads", "in.bam", "out.bam"}).error.empty());
+    CHECK(!parse({"--require-flags", "BOGUS", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--require-flags", "0x10000", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--require-flags", "0x100000000", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--require-flags", "4x", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--exclude-flags", "-1", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--min-mapq", "256", "in.bam", "out.bam"}).error.empty());
+    CHECK(!parse({"--min-mapq", "-1", "in.bam", "out.bam"}).error.empty());
+    CHECK(!parse({"--min-mapq", "x", "in.bam", "out.bam"}).error.empty());
+    CHECK(!parse({"--min-read-length", "-1", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--min-read-length", "x", "in.bam", "out.bam"})
+               .error.empty());
+    CHECK(!parse({"--filter-expr=", "in.bam", "out.bam"}).error.empty());
     CHECK(!parse({"--compression", "in.bam", "out.bam"}).error.empty());
     CHECK(!parse({"--unknown", "in.bam", "out.bam"}).error.empty());
     CHECK(!parse({"-x", "in.bam", "out.bam"}).error.empty());

@@ -1,5 +1,7 @@
 #include "header.hpp"
 
+#include "version.hpp"
+
 #include <set>
 #include <string>
 #include <vector>
@@ -64,6 +66,10 @@ std::string slim_header_text(std::string_view text) {
     return output;
 }
 
+std::string husk_marker_line() {
+    return std::string("@CO\tHUSK:1\tversion=") + HUSK_VERSION + "\n";
+}
+
 HeaderPtr build_slim_header(const sam_hdr_t *header) {
     if (header == nullptr) {
         return nullptr;
@@ -72,10 +78,11 @@ HeaderPtr build_slim_header(const sam_hdr_t *header) {
     if (text == nullptr) {
         return nullptr;
     }
-    const std::string slim = slim_header_text(text);
+    std::string slim = slim_header_text(text);
     if (slim.empty()) {
         return nullptr;
     }
+    slim += husk_marker_line();
     HeaderPtr result(sam_hdr_parse(slim.size(), slim.c_str()));
     if (!result || sam_hdr_nref(result.get()) < 1) {
         return nullptr;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "downsample.hpp"
+#include "filter.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -25,6 +26,7 @@ struct SlimOptions {
     bool verify = false;
     int threads = 1;
     int compression = 6;
+    FilterOptions filter;
     DownsampleOptions downsample;
 };
 

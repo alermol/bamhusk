@@ -42,8 +42,12 @@ void test_header() {
     husk::HeaderPtr slim = husk::build_slim_header(header.get());
     CHECK(slim != nullptr);
     const std::string slim_text = sam_hdr_str(slim.get());
+    const std::string marker = husk::husk_marker_line();
+    CHECK(marker.rfind("@CO\tHUSK:1\tversion=", 0) == 0);
     CHECK(slim_text.find("@PG") == std::string::npos);
-    CHECK(slim_text.find("@CO") == std::string::npos);
+    CHECK(slim_text.find("@CO\tdrop me") == std::string::npos);
+    CHECK(slim_text.find(marker) != std::string::npos);
+    CHECK(slim_text.find("@CO", slim_text.find("@CO") + 3) == std::string::npos);
     CHECK(slim_text.find("SO:coordinate") != std::string::npos);
 
     husk::HeaderPtr no_sq = husk_test::make_header("@HD\tVN:1.6\n");

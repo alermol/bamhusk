@@ -68,6 +68,42 @@ void report(const std::string &message) {
     std::fprintf(stderr, "husk: %s\n", message.c_str());
 }
 
+bool apply_filter_expression(
+    samFile *file,
+    const FilterOptions &filter,
+    std::string &error
+) {
+    if (filter.expression.empty()) {
+        return true;
+    }
+    if (hts_set_filter_expression(file, filter.expression.c_str()) < 0) {
+        error = "invalid --filter-expr '" + filter.expression + "'";
+        return false;
+    }
+    return true;
+}
+
+bool record_passes_filter(const bam1_t *record, const FilterOptions &filter) {
+    if ((record->core.flag & filter.require_flags) != filter.require_flags) {
+        return false;
+    }
+    if ((record->core.flag & filter.exclude_flags) != 0) {
+        return false;
+    }
+    if (record->core.qual < filter.min_mapq) {
+        return false;
+    }
+    if (filter.min_read_length > 0) {
+        const hts_pos_t length = bam_cigar2qlen(
+            static_cast<int>(record->core.n_cigar), bam_get_cigar(record)
+        );
+        if (length < filter.min_read_length) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool remove_unwanted_aux(
     bam1_t *record,
     bool keep_rg,
@@ -203,6 +239,7 @@ bool count_reads_per_group(
     const std::filesystem::path &path,
     const SampleGroups &groups,
     bool per_sample,
+    const FilterOptions &filter,
     int threads,
     std::vector<std::int64_t> &counts,
     std::string &error
@@ -214,6 +251,9 @@ bool count_reads_per_group(
     }
     if (threads > 1 && hts_set_threads(file.get(), threads) != 0) {
         error = "cannot set input threads";
+        return false;
+    }
+    if (!apply_filter_expression(file.get(), filter, error)) {
         return false;
     }
 
@@ -242,8 +282,15 @@ bool count_reads_per_group(
             break;
         }
         if (status < -1) {
-            error = "error reading '" + path.string() + "'";
+            error =
+                filter.expression.empty()
+                    ? "error reading '" + path.string() + "'"
+                    : "error evaluating --filter-expr '" + filter.expression +
+                          "' on '" + path.string() + "'";
             return false;
+        }
+        if (!record_passes_filter(record.get(), filter)) {
+            continue;
         }
 
         const int group =
@@ -408,6 +455,21 @@ int write_slim_bam(
         report("--compression must be between 0 and 9");
         return 2;
     }
+    if (options.filter.require_flags < 0 ||
+        options.filter.require_flags > 0xffff ||
+        options.filter.exclude_flags < 0 ||
+        options.filter.exclude_flags > 0xffff) {
+        report("filter flags must be 16-bit values");
+        return 2;
+    }
+    if (options.filter.min_mapq < 0 || options.filter.min_mapq > 255) {
+        report("--min-mapq must be between 0 and 255");
+        return 2;
+    }
+    if (options.filter.min_read_length < 0) {
+        report("--min-read-length must be non-negative");
+        return 2;
+    }
     if (options.drop_seq && options.keep_qual) {
         report("--keep-qual requires SEQ; drop --drop-seq");
         return 2;
@@ -505,6 +567,11 @@ int write_slim_bam(
         report("cannot set input threads");
         return 1;
     }
+    std::string filter_error;
+    if (!apply_filter_expression(input.get(), options.filter, filter_error)) {
+        report(filter_error);
+        return 2;
+    }
 
     HeaderPtr header(sam_hdr_read(input.get()));
     if (!header) {
@@ -539,6 +606,7 @@ int write_slim_bam(
                 output.input,
                 sample_groups,
                 per_sample,
+                options.filter,
                 options.threads,
                 remaining,
                 count_error
@@ -613,7 +681,15 @@ int write_slim_bam(
             break;
         }
         if (read_status < -1) {
-            report("error reading '" + output.input.string() + "'");
+            if (options.filter.expression.empty()) {
+                report("error reading '" + output.input.string() + "'");
+            } else {
+                report(
+                    "error evaluating --filter-expr '" +
+                    options.filter.expression + "' on '" +
+                    output.input.string() + "'"
+                );
+            }
             return 1;
         }
 
@@ -623,6 +699,9 @@ int write_slim_bam(
             )) {
             report(error);
             return 1;
+        }
+        if (!record_passes_filter(record.get(), options.filter)) {
+            continue;
         }
 
         bool keep = true;

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.28)
 
 project(
     bamhusk
-    VERSION 0.2.0
+    VERSION 0.3.0
     DESCRIPTION "Reduce a BAM to the fields downstream analysis needs"
     LANGUAGES CXX
 )
@@ -66,6 +66,7 @@ add_library(
     STATIC
     src/cli.cpp
     src/downsample.hpp
+    src/filter.hpp
     src/header.cpp
     src/bam_slim.cpp
     src/platform.cpp

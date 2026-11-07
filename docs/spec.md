@@ -1,6 +1,6 @@
 # Husk specification
 
-**Status:** v0.2.0 contract.
+**Status:** v0.3.0 contract.
 
 ## 1. Purpose
 
@@ -15,7 +15,7 @@ application never receives or executes the binary.
 ### Goals
 
 - Preserve every alignment record and every field the downstream analysis
-  reads, unless optional random downsampling is requested.
+  reads, unless optional filtering or random downsampling is requested.
 - Remove data that the downstream analysis does not read.
 - Produce output that passes `samtools quickcheck`.
 - Ship reproducible binaries for Linux, macOS, and Windows.
@@ -23,8 +23,8 @@ application never receives or executes the binary.
 
 ### Non-goals
 
-- Read filtering other than optional random downsampling, trimming, duplicate
-  removal, or realignment.
+- Read filtering beyond the optional FLAG, MAPQ, read-length, and expression
+  filters in section 7.1, trimming, duplicate removal, or realignment.
 - CRAM support in v0.1.
 - Server-side execution of user-uploaded binaries.
 - Preserving base qualities or read names by default.
@@ -33,9 +33,13 @@ application never receives or executes the binary.
 ## 3. Definitions
 
 **Slimming** rewrites a BAM with only the header lines and record fields
-listed in sections 6 and 7. Without downsampling, it keeps the same records in
-the same order; with downsampling, it keeps the selected records in input
-order.
+listed in sections 6 and 7. Without filtering or downsampling, it keeps the
+same records in the same order. Filters remove records before downsampling;
+the surviving records keep their input order.
+
+**Filtering** is an optional record-level selection applied before
+downsampling. Filters combine with AND. They never reorder records or change
+kept field values.
 
 **Kept fields** are the BAM core fields `FLAG`, `RNAME`, `POS`, `MAPQ`,
 `CIGAR`, `RNEXT`, `PNEXT`, and `TLEN`, plus the optional `RG:Z` tag. Their
@@ -64,6 +68,13 @@ Options:
   -@, --threads N     htslib I/O threads (default: min(4, cores))
   --index             Write out.bam.csi with min_shift=14
   --compression N     BGZF compression level 0-9 (default 6)
+  --require-flags FLAGS
+                      Keep records with all FLAGS bits present
+  --exclude-flags FLAGS
+                      Drop records with any FLAGS bits present
+  --min-mapq N        Keep records with MAPQ >= N (0-255)
+  --min-read-length N Keep records with CIGAR query length >= N
+  --filter-expr EXPR  Keep records matching an htslib filter expression
   --downsample-fraction F
                       Keep a random fraction F of reads (0 < F <= 1)
   --downsample-count N
@@ -104,6 +115,13 @@ Standard output is used only by `--help` and `--version`.
 - Remove the temporary file on error or `SIGINT`.
 - `--keep-qual` with `--drop-seq` is a usage error.
 - `--threads` must be at least 1; `--compression` must be in 0-9.
+- Filters are disabled by default: both FLAG masks are 0, `--min-mapq` is 0,
+  `--min-read-length` is 0, and no expression is set.
+- `--require-flags` and `--exclude-flags` accept comma-separated FLAG names,
+  decimal, hexadecimal, or octal values, and must fit in 16 bits.
+- `--min-mapq` must be in 0-255; `--min-read-length` must be non-negative.
+- `--filter-expr` must be non-empty. It is parsed by htslib; unsupported
+  symbols fail while records are read.
 - `--drop-rg` is only valid when the header can be shown to describe a single
   sample. Husk refuses when the header declares more than one distinct `SM`
   value; a read group without a non-empty `SM` counts as an unknown sample.
@@ -124,6 +142,8 @@ removes a stale adjacent `.csi`.
 
 - BAM only. CRAM and SAM input are rejected in v0.1.
 - The input must be coordinate-sorted. Husk does not re-sort.
+- Records rejected by `--filter-expr` are not checked for sort order; see
+  section 7.1.
 - The input header must contain at least one `@SQ` line. A BAM without
   reference targets is rejected because its output would fail
   `samtools quickcheck`.
@@ -138,17 +158,24 @@ Keep, in their original order:
 - `@SQ`
 - `@RG`
 
-Drop every other header line, including `@PG`, `@CO`, and unknown record
-types. No synthetic lines are added. Kept lines are copied byte-for-byte, so
+Drop every other header line, including `@PG` and input `@CO` lines. Append
+exactly one synthetic marker after the kept lines:
+
+```text
+@CO	HUSK:1	version=<version>
+```
+
+`HUSK:1` identifies the marker format. `<version>` is the Husk version. No
+other synthetic lines are added. Kept lines are copied byte-for-byte, so
 `@HD SO:coordinate` and all `@SQ`/`@RG` fields survive.
 
 If no `@SQ` line is present, exit 1.
 
 ## 7. Record policy
 
-Without downsampling, every input record produces exactly one output record,
-in input order. With downsampling, each selected input record produces exactly
-one output record, in input order.
+Without filtering or downsampling, every input record produces exactly one
+output record, in input order. Filters remove records before downsampling.
+Every surviving record produces exactly one output record, in input order.
 
 | Field | Default | `--keep-name` | `--keep-qual` | `--drop-seq` | `--drop-rg` |
 |---|---|---|---|---|---|
@@ -173,16 +200,50 @@ A CIGAR longer than 65535 operations is stored by htslib as a two-operation
 placeholder plus a `CG:B:I` tag. Husk preserves that tag when required so the
 real CIGAR survives.
 
-### 7.1 Downsampling
+### 7.1 Filtering
+
+Filters are optional and disabled by default. They combine with AND and are
+applied before downsampling. The output header is unchanged by filtering.
+
+- `--require-flags FLAGS` keeps a record only when every FLAG bit in `FLAGS`
+  is present.
+- `--exclude-flags FLAGS` drops a record when any FLAG bit in `FLAGS` is
+  present.
+- `--min-mapq N` keeps records with `MAPQ >= N`. The range is 0-255; MAPQ 255
+  means unavailable and passes any valid threshold.
+- `--min-read-length N` keeps records whose CIGAR query length is at least
+  `N`. Unmapped records have query length 0 and are dropped when `N > 0`.
+  This test uses CIGAR, so it also works with `--drop-seq`.
+- `--filter-expr EXPR` keeps records matching an htslib filter expression.
+  The expression language is the one used by `samtools view -e`; it can read
+  core fields and auxiliary tags from the input record.
+
+FLAG values accept comma-separated names, decimal, hexadecimal, or octal.
+Flag names are the ones accepted by htslib, such as `UNMAP`, `SECONDARY`,
+`SUPPLEMENTARY`, `DUP`, and `QCFAIL`.
+
+The expression filter is applied by htslib while reading. Records rejected by
+the expression are not inspected for coordinate order, malformed `RG` tags, or
+other Husk validation. The other filters run after the coordinate-order check.
+Filtered-out records are not transformed, so record-level tag checks apply only
+to retained records. An unsupported expression symbol fails while reading and
+exits 1.
+
+Filters are lossy. Removing unmapped, secondary, supplementary, duplicate, or
+low-MAPQ records changes downstream results. Consumers must expose these
+choices explicitly.
+
+### 7.2 Downsampling
 
 Downsampling is record-level: each record is selected or rejected
-independently of its mate. The output preserves the input order.
+independently of its mate. The output preserves the input order. Only records
+that pass the filters are eligible for downsampling.
 
-Husk counts records per downsampling group in a first pass, computes each
-group's target, then makes a second pass and keeps exactly the target number
-of records from each group using uniform sampling without replacement. If a
-target is greater than or equal to a group's size, the whole group is kept.
-Fraction targets are rounded to the nearest integer.
+Husk counts eligible records per downsampling group in a first pass, computes
+each group's target, then makes a second pass and keeps exactly the target
+number of records from each group using uniform sampling without replacement.
+If a target is greater than or equal to a group's size, the whole group is
+kept. Fraction targets are rounded to the nearest integer.
 
 In `sample` mode the group is determined from the record's `RG:Z` tag and the
 `@RG` header lines. Read groups with the same non-empty `SM` value form one
@@ -199,11 +260,14 @@ options. The header policy is unchanged; the output header is the same
 A successful run guarantees:
 
 - `samtools quickcheck` passes.
-- Without downsampling, the read count matches the input. With downsampling,
-  the read count matches the sum of the computed group targets.
+- Without filtering or downsampling, the read count matches the input. With
+  filters only, the read count matches the number of records that pass them.
+  With downsampling, the read count matches the sum of the computed group
+  targets.
 - Every output core field matches its input record.
 - `RG:Z` matches the input when retained.
-- The header contains only `@HD`, `@SQ`, and `@RG`.
+- The header contains only `@HD`, `@SQ`, `@RG`, and exactly one synthetic
+  `@CO` marker line with `HUSK:1` and the Husk version.
 - The output is a valid BAM with a readable header and decodable records.
 
 With `--verify`, Husk reopens the output, decodes the header and every record,
@@ -230,13 +294,13 @@ A release is identified by a tag `v<version>` and contains:
 {
   "schema": 1,
   "tool": "husk",
-  "version": "0.2.0",
-  "source": "https://github.com/alermol/bamhusk/releases/download/v0.2.0/bamhusk-0.2.0-src.tar.gz",
+  "version": "0.3.0",
+  "source": "https://github.com/alermol/bamhusk/releases/download/v0.3.0/bamhusk-0.3.0-src.tar.gz",
   "assets": [
     {
       "os": "linux",
       "arch": "x86_64",
-      "url": "https://github.com/alermol/bamhusk/releases/download/v0.2.0/husk-0.2.0-linux-x86_64",
+      "url": "https://github.com/alermol/bamhusk/releases/download/v0.3.0/husk-0.3.0-linux-x86_64",
       "sha256": "...",
       "size": 1234567
     }
@@ -268,13 +332,15 @@ The consuming application:
 
 ## 11. Acceptance
 
-v0.2.0 is accepted when:
+v0.3.0 is accepted when:
 
 - All validation rules in section 8 hold on synthetic and real BAMs.
 - Downstream window-metric counts are identical before and after slimming
-  without downsampling.
-- Total and sample downsampling produce the expected group targets, and a
-  fixed seed reproduces the selected records.
+  without filtering or downsampling.
+- FLAG, MAPQ, read-length, and expression filters match equivalent
+  `samtools view` filters.
+- Total and sample downsampling produce the expected group targets after
+  filtering, and a fixed seed reproduces the selected records.
 - The build matrix produces every asset in section 9.
 - Every binary asset has a matching checksum and manifest entry; the source
   tarball has a matching checksum in `SHA256SUMS`.

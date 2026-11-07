@@ -17,6 +17,8 @@ server-side size limit. The application never receives or executes the binary.
 
 - Keeps `@HD`, `@SQ`, `@RG`, and the alignment fields `FLAG`, `RNAME`, `POS`,
   `MAPQ`, `CIGAR`, `RNEXT`, `PNEXT`, `TLEN`, and `SEQ`.
+- Writes one `@CO` marker (`HUSK:1`, plus the Husk version) so consumers can
+  identify Husk output.
 - Keeps `RG:Z` for multi-sample BAMs; refuses `--drop-rg` when the header
   declares multiple samples.
 - Preserves long CIGARs through the `CG:B:I` tag.
@@ -24,9 +26,12 @@ server-side size limit. The application never receives or executes the binary.
   cleans up on failure or `SIGINT`.
 - Optional CSI index, output verification, BGZF compression control, and
   htslib I/O threads.
+- Optional record filters: FLAG masks, minimum MAPQ, minimum read length, and
+  htslib filter expressions.
 - Optional reproducible random downsampling by fraction or read count, either
   across the whole file or per sample.
-- Rejects SAM/CRAM input, malformed `RG` tags, and unsorted records.
+- Rejects SAM/CRAM input; validates sort order and `RG` tags on retained
+  records.
 
 ## Build
 
@@ -56,6 +61,13 @@ Options:
   -@, --threads N     htslib I/O threads (default: min(4, cores))
   --index             Write out.bam.csi with min_shift=14
   --compression N     BGZF compression level 0-9 (default 6)
+  --require-flags FLAGS
+                      Keep records with all FLAGS bits present
+  --exclude-flags FLAGS
+                      Drop records with any FLAGS bits present
+  --min-mapq N        Keep records with MAPQ >= N (0-255)
+  --min-read-length N Keep records with CIGAR query length >= N
+  --filter-expr EXPR  Keep records matching an htslib filter expression
   --downsample-fraction F
                       Keep a random fraction F of reads (0 < F <= 1)
   --downsample-count N
@@ -72,6 +84,12 @@ Options:
 
 Exit codes: `0` success, `1` runtime/I/O/validation error, `2` usage error,
 `3` verification failure.
+
+Filters are off by default and combine with AND. They run before downsampling.
+`--require-flags` and `--exclude-flags` accept names, decimal, hexadecimal, or
+octal FLAG values. `--filter-expr` uses the htslib expression language, as in
+`samtools view -e`; records rejected by the expression are not inspected by
+Husk's other input checks.
 
 `--downsample-mode sample` groups records by the `SM` value of their `RG:Z`
 read group. Multiple read groups with the same `SM` form one sample; reads

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "downsample.hpp"
+#include "filter.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -24,6 +25,7 @@ struct Options {
     bool verify = false;
     int threads = default_threads();
     int compression = kDefaultCompression;
+    FilterOptions filter;
     DownsampleOptions downsample;
     bool downsample_mode_set = false;
     bool downsample_seed_set = false;

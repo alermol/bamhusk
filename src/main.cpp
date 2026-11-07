@@ -66,6 +66,7 @@ int main(int argc, char **argv) {
     slim.verify = options.verify;
     slim.threads = options.threads;
     slim.compression = options.compression;
+    slim.filter = options.filter;
     slim.downsample = options.downsample;
 
     husk::SlimStats stats;

@@ -78,8 +78,15 @@ check_output_contract() {
     if [[ "$(view "${input}" | wc -l)" -ne "$(view "${output}" | wc -l)" ]]; then
         fail "read count changed for ${output}"
     fi
-    if samtools view --no-PG -H "${output}" | grep -E '^@(PG|CO)' >/dev/null; then
-        fail "@PG or @CO survived in ${output}"
+    local header
+    header=$(samtools view --no-PG -H "${output}")
+    if grep -q '^@PG' <<<"${header}"; then
+        fail "@PG survived in ${output}"
+    fi
+    if [[ "$(grep -c '^@CO' <<<"${header}")" -ne 1 ]] ||
+        ! grep -qE '^@CO[[:space:]]HUSK:1[[:space:]]version=[0-9]+[.][0-9]+[.][0-9]+$' \
+            <<<"${header}"; then
+        fail "missing or malformed husk marker in ${output}"
     fi
     extra=$(
         view "${output}" | cut -f12- | tr '\t' '\n' |
@@ -106,6 +113,8 @@ grep -q '^@HD' <<<"${header}" || fail "missing @HD"
 grep -q '^@SQ' <<<"${header}" || fail "missing @SQ"
 grep -q '^@RG' <<<"${header}" || fail "missing @RG"
 grep -q 'SO:coordinate' <<<"${header}" || fail "missing SO:coordinate"
+grep -qE '^@CO[[:space:]]HUSK:1[[:space:]]version=' <<<"${header}" ||
+    fail "missing husk marker"
 
 # Keep read names.
 "${husk}" --keep-name "${fixtures}/basic.bam" "${work}/keep-name.bam"

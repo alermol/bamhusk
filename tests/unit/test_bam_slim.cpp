@@ -177,7 +177,7 @@ void test_bam_slim() {
 
         const std::string header = husk_test::read_header_text(output);
         CHECK(header.find("@PG") == std::string::npos);
-        CHECK(header.find("@CO") == std::string::npos);
+        CHECK(header.find(husk::husk_marker_line()) != std::string::npos);
         CHECK(header.find("SO:coordinate") != std::string::npos);
 
         husk_test::BamPtr record = read_first_record(output);
@@ -190,6 +190,169 @@ void test_bam_slim() {
         std::string error;
         CHECK(husk::verify_bam(output, 2, false, error));
         CHECK(error.empty());
+    }
+
+    {
+        const auto filter_input = directory.path / "filter.bam";
+        husk_test::write_bam(
+            filter_input,
+            "@HD\tVN:1.6\tSO:coordinate\n"
+            "@SQ\tSN:chr1\tLN:1000\n",
+            {
+                "mapped0\t0\tchr1\t1\t10\t4M\t*\t0\t0\tACGT\tIIII\tNM:i:0",
+                "mapped1\t0\tchr1\t2\t20\t4M\t*\t0\t0\tACGT\tIIII\tNM:i:1",
+                "reverse\t16\tchr1\t3\t30\t4M\t*\t0\t0\tACGT\tIIII\tNM:i:0",
+                "secondary\t256\tchr1\t4\t60\t4M\t*\t0\t0\tACGT\tIIII",
+                "short\t0\tchr1\t5\t60\t2M\t*\t0\t0\tAC\tII",
+                "unmapped\t4\t*\t0\t0\t*\t*\t0\t0\tACGT\tIIII",
+            }
+        );
+
+        {
+            const auto output = directory.path / "filter-mapq.bam";
+            husk::SlimOptions options;
+            options.keep_name = true;
+            options.filter.min_mapq = 20;
+            CHECK_EQ(
+                husk::write_slim_bam(
+                    output_for(filter_input, output), options, nullptr
+                ),
+                0
+            );
+            CHECK_EQ(read_names(output).size(), std::size_t{4});
+        }
+
+        {
+            const auto output = directory.path / "filter-length.bam";
+            husk::SlimOptions options;
+            options.keep_name = true;
+            options.filter.min_read_length = 4;
+            CHECK_EQ(
+                husk::write_slim_bam(
+                    output_for(filter_input, output), options, nullptr
+                ),
+                0
+            );
+            CHECK_EQ(read_names(output).size(), std::size_t{4});
+        }
+
+        {
+            const auto output = directory.path / "filter-flags.bam";
+            husk::SlimOptions options;
+            options.keep_name = true;
+            options.filter.exclude_flags = BAM_FUNMAP | BAM_FSECONDARY;
+            CHECK_EQ(
+                husk::write_slim_bam(
+                    output_for(filter_input, output), options, nullptr
+                ),
+                0
+            );
+            CHECK_EQ(read_names(output).size(), std::size_t{4});
+        }
+
+        {
+            const auto output = directory.path / "filter-require.bam";
+            husk::SlimOptions options;
+            options.keep_name = true;
+            options.filter.require_flags = BAM_FREVERSE;
+            CHECK_EQ(
+                husk::write_slim_bam(
+                    output_for(filter_input, output), options, nullptr
+                ),
+                0
+            );
+            const auto names = read_names(output);
+            CHECK_EQ(names.size(), std::size_t{1});
+            CHECK_EQ(names.at(0), std::string("reverse"));
+        }
+
+        {
+            const auto output = directory.path / "filter-combined.bam";
+            husk::SlimOptions options;
+            options.keep_name = true;
+            options.filter.exclude_flags = BAM_FUNMAP | BAM_FSECONDARY;
+            options.filter.min_mapq = 20;
+            options.filter.min_read_length = 4;
+            CHECK_EQ(
+                husk::write_slim_bam(
+                    output_for(filter_input, output), options, nullptr
+                ),
+                0
+            );
+            const auto names = read_names(output);
+            CHECK_EQ(names.size(), std::size_t{2});
+            CHECK_EQ(names.at(0), std::string("mapped1"));
+            CHECK_EQ(names.at(1), std::string("reverse"));
+        }
+
+        {
+            const auto output = directory.path / "filter-expr.bam";
+            husk::SlimOptions options;
+            options.keep_name = true;
+            options.filter.expression = "[NM] == 0";
+            CHECK_EQ(
+                husk::write_slim_bam(
+                    output_for(filter_input, output), options, nullptr
+                ),
+                0
+            );
+            const auto names = read_names(output);
+            CHECK_EQ(names.size(), std::size_t{2});
+            CHECK_EQ(names.at(0), std::string("mapped0"));
+            CHECK_EQ(names.at(1), std::string("reverse"));
+        }
+
+        {
+            const auto output = directory.path / "filter-expr-invalid.bam";
+            husk::SlimOptions options;
+            options.filter.expression = "(";
+            CHECK_EQ(
+                husk::write_slim_bam(
+                    output_for(filter_input, output), options, nullptr
+                ),
+                1
+            );
+            CHECK(!std::filesystem::exists(output));
+        }
+
+        {
+            const auto output = directory.path / "filter-downsample.bam";
+            husk::SlimOptions options;
+            options.keep_name = true;
+            options.filter.exclude_flags = BAM_FUNMAP | BAM_FSECONDARY;
+            options.filter.min_mapq = 20;
+            options.filter.min_read_length = 4;
+            options.downsample.count = 1;
+            husk::SlimStats stats;
+            CHECK_EQ(
+                husk::write_slim_bam(
+                    output_for(filter_input, output), options, &stats
+                ),
+                0
+            );
+            CHECK_EQ(stats.reads, 1);
+            CHECK_EQ(stats.input_reads, 2);
+            CHECK_EQ(read_names(output).size(), std::size_t{1});
+        }
+
+        {
+            const auto output =
+                directory.path / "filter-expr-downsample.bam";
+            husk::SlimOptions options;
+            options.keep_name = true;
+            options.filter.expression = "[NM] == 0";
+            options.downsample.count = 1;
+            husk::SlimStats stats;
+            CHECK_EQ(
+                husk::write_slim_bam(
+                    output_for(filter_input, output), options, &stats
+                ),
+                0
+            );
+            CHECK_EQ(stats.reads, 1);
+            CHECK_EQ(stats.input_reads, 2);
+            CHECK_EQ(read_names(output).size(), std::size_t{1});
+        }
     }
 
     {

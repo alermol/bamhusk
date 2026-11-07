@@ -17,6 +17,7 @@ trap 'rm -rf "${work}"' EXIT
 "${root}/tests/integration/differential.sh" "${husk}" "${work}/fixtures"
 "${root}/tests/integration/edge_cases.sh" "${husk}" "${work}/fixtures"
 "${root}/tests/integration/downsample.sh" "${husk}" "${work}/fixtures"
+"${root}/tests/integration/filters.sh" "${husk}" "${work}/fixtures"
 "${root}/tests/integration/window_metrics.sh" "${husk}" "${work}/fixtures/basic.bam"
 
 echo "integration: all checks passed"

@@ -34,12 +34,17 @@ no_temp_files() {
 samtools quickcheck -v "${work}/empty.bam"
 [[ "$(samtools view -c "${work}/empty.bam")" -eq 0 ]] ||
     fail "empty BAM gained records"
+grep -qE '^@CO[[:space:]]HUSK:1[[:space:]]version=' \
+    <<<"$(samtools view --no-PG -H "${work}/empty.bam")" ||
+    fail "empty BAM lost the husk marker"
 
 # Missing @HD is allowed; surviving lines are copied.
 "${husk}" "${fixtures}/no_hd.bam" "${work}/no-hd.bam"
 samtools quickcheck -v "${work}/no-hd.bam"
 header=$(samtools view --no-PG -H "${work}/no-hd.bam")
 grep -q '^@SQ' <<<"${header}" || fail "no-hd lost @SQ"
+grep -qE '^@CO[[:space:]]HUSK:1[[:space:]]version=' <<<"${header}" ||
+    fail "no-hd lost the husk marker"
 if grep -q '^@HD' <<<"${header}"; then
     fail "no-hd gained a synthetic @HD"
 fi

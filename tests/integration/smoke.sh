@@ -35,8 +35,18 @@ header=$(samtools view --no-PG -H "${work}/out.bam")
 grep -q '^@HD' <<<"${header}"
 grep -q '^@SQ' <<<"${header}"
 grep -q '^@RG' <<<"${header}"
-if grep -qE '^@(PG|CO)' <<<"${header}"; then
-    echo "smoke: unexpected @PG or @CO header line" >&2
+if grep -q '^@PG' <<<"${header}"; then
+    echo "smoke: unexpected @PG header line" >&2
+    exit 1
+fi
+if [[ "$(grep -c '^@CO' <<<"${header}")" -ne 1 ]] ||
+    ! grep -qE '^@CO[[:space:]]HUSK:1[[:space:]]version=[0-9]+[.][0-9]+[.][0-9]+$' \
+        <<<"${header}"; then
+    echo "smoke: missing or malformed husk marker" >&2
+    exit 1
+fi
+if grep -q 'drop me' <<<"${header}"; then
+    echo "smoke: input @CO line survived" >&2
     exit 1
 fi
 
